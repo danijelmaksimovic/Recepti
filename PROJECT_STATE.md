@@ -33,5 +33,5 @@
 - Playwright WebKit is not installed in the cloud container; checks ran in Chromium with iPhone emulation.
 
 ## Open items
-- Hosting choice + GitHub repo name (Cloudflare Pages or GitHub Pages).
+- Hosting: GitHub Pages (chosen 2026-11-25), deployed by .github/workflows/deploy.yml on push to main. Repo Settings > Pages > Source must be "GitHub Actions".
 - Tablet used for drawing (iPad / Android / Windows) → stylus test target.
