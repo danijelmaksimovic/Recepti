@@ -78,3 +78,21 @@ describe('assets', () => {
     expect(await getAsset(used.id)).toBeDefined()
   })
 })
+
+describe('asset usage counts', () => {
+  it('counts every place an asset is used, including card backgrounds', async () => {
+    const { assetUsageCounts, extractAssetIds } = await import('@/db')
+    const photo = await makeAsset()
+    const bg = await makeAsset()
+    const unused = await makeAsset()
+    const recipe = await createRecipe({ name: 'Soup', photoAssetId: photo.id, photoAssetIds: [photo.id] })
+    const canvas = { version: 1, background: { color: '#ffffff', image: { assetId: bg.id, fit: 'cover', opacity: 1, tileSize: 0.25 } }, objects: [{ type: 'Image', assetId: photo.id }] }
+    expect(extractAssetIds(canvas).sort()).toEqual([photo.id, bg.id].sort())
+    await createDesign({ recipeId: recipe.id, preset: 'p', width: 10, height: 10, canvas })
+    const counts = await assetUsageCounts()
+    expect(counts[photo.id]).toBe(2)
+    expect(counts[bg.id]).toBe(1)
+    expect(counts[unused.id]).toBeUndefined()
+    await expect(deleteAsset(bg.id)).rejects.toBeInstanceOf(AssetInUseError)
+  })
+})

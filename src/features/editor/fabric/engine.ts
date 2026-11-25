@@ -4,12 +4,15 @@
  * a small method surface and two callbacks, so Fabric never leaks into UI code.
  */
 import { Canvas, Point, Rect, Textbox, util, type FabricObject, type TPointerEventInfo } from 'fabric'
+import { DEFAULT_CROP, type CropSpec } from '@/domain/card/crop'
+import { loadAssetImage } from '@/features/assets/urls'
 import { stripResolvedText, fontsInDoc, type CardBackground, type CardDoc, type CardObjectJSON, CARD_DOC_VERSION, CUSTOM_PROPS } from '@/domain/card/doc'
 import { boldWeight, DEFAULT_FONT } from '@/domain/card/fonts'
 import { defaultListStyle, getField, token, type ListStyle, type TokenContext } from '@/domain/card/tokens'
 import { paintPage, type PageSpec } from './background'
 import { isCardText, setupFabric, type CardText } from './setup'
 import { applyText, applyTextAll, ensureFonts } from './text'
+import { RECIPE_PHOTO, applyCrop, applyRadius, enlivenCardObjects, isCardImage, refreshBoundImages, type CardImage } from './images'
 
 export interface GridSettings {
   show: boolean
@@ -54,7 +57,25 @@ export interface ShapeSnapshot {
   height: number
 }
 
-export type SelectionSnapshot = TextSnapshot | ShapeSnapshot | { kind: 'multi'; count: number } | null
+export interface ImageSnapshot {
+  kind: 'image'
+  name: string
+  angle: number
+  opacity: number
+  x: number
+  y: number
+  width: number
+  height: number
+  crop: CropSpec
+  radius: number
+  /** Shows the recipe's photo rather than a fixed library image. */
+  bound: boolean
+  assetId?: string
+}
+
+export type SelectionSnapshot = TextSnapshot | ShapeSnapshot | ImageSnapshot | { kind: 'multi'; count: number } | null
+
+export type ImageSource = { assetId: string; name?: string; graphic?: boolean } | { binding: typeof RECIPE_PHOTO; name?: string }
 
 export interface EditorCallbacks {
   /** The document changed and should be saved. */
@@ -172,10 +193,11 @@ export class CardEditor {
     this.loading = true
     try {
       await ensureFonts(fontsInDoc(doc))
-      this.canvas.page = { ...this.canvas.page, background: doc.background }
+      this.canvas.page = { ...this.canvas.page, background: doc.background, image: undefined }
+      void this.syncBackgroundImage()
       this.canvas.discardActiveObject()
       this.canvas.remove(...this.canvas.getObjects())
-      const objects = (await util.enlivenObjects(doc.objects)) as FabricObject[]
+      const objects = await enlivenCardObjects(doc.objects, this.ctx)
       applyTextAll(objects, this.ctx, { placeholders: true })
       if (objects.length) this.canvas.add(...objects)
       this.canvas.requestRenderAll()
@@ -187,7 +209,8 @@ export class CardEditor {
 
   toDoc(): CardDoc {
     const objects = this.canvas.getObjects().map((o) => o.toObject([...CUSTOM_PROPS]) as CardObjectJSON)
-    return { version: CARD_DOC_VERSION, background: { ...this.canvas.page.background }, objects: stripResolvedText(objects) }
+    const { image, ...rest } = this.canvas.page.background
+    return { version: CARD_DOC_VERSION, background: { ...rest, ...(image ? { image: { ...image } } : {}) }, objects: stripResolvedText(objects) }
   }
 
   get page(): PageSpec {
@@ -200,12 +223,32 @@ export class CardEditor {
     applyTextAll(this.canvas.getObjects(), ctx, { placeholders: true })
     this.canvas.requestRenderAll()
     this.emitSelection()
+    void refreshBoundImages(this.canvas.getObjects(), ctx).then((changed) => {
+      if (!changed || this.ctx !== ctx) return
+      this.canvas.requestRenderAll()
+      this.emitSelection()
+    })
   }
 
   setBackground(patch: Partial<CardBackground>) {
-    this.canvas.page = { ...this.canvas.page, background: { ...this.canvas.page.background, ...patch } }
+    const prev = this.canvas.page.background.image?.assetId
+    const background = { ...this.canvas.page.background, ...patch }
+    if ('image' in patch && !patch.image) delete background.image
+    const same = prev === background.image?.assetId
+    this.canvas.page = { ...this.canvas.page, background, image: same ? this.canvas.page.image : undefined }
+    if (!same) void this.syncBackgroundImage()
     this.canvas.requestRenderAll()
     this.changed()
+  }
+
+  /** Decode the background image (if any) and repaint once it is ready. */
+  private async syncBackgroundImage() {
+    const id = this.canvas.page.background.image?.assetId
+    if (!id) return
+    const img = await loadAssetImage(id)
+    if (!img || this.canvas.page.background.image?.assetId !== id) return
+    this.canvas.page = { ...this.canvas.page, image: img }
+    this.canvas.requestRenderAll()
   }
 
   /** Change the card size; objects keep their positions. */
@@ -351,6 +394,51 @@ export class CardEditor {
     return t
   }
 
+  /** Place a library image, or a frame that shows the recipe's photo. */
+  async addImage(source: ImageSource) {
+    const json: CardObjectJSON = { type: 'Image', crop: { ...DEFAULT_CROP }, radius: 0, name: source.name ?? 'Image' }
+    if ('binding' in source) {
+      json.binding = source.binding
+      json.name = source.name ?? 'Recipe photo'
+    } else json.assetId = source.assetId
+    const [img] = (await enlivenCardObjects([json], this.ctx)) as CardImage[]
+    const { width: W, height: H } = this.page
+    const graphic = 'graphic' in source && source.graphic
+    const box = graphic ? { w: Math.min(W, H) * 0.45, h: Math.min(W, H) * 0.45 } : { w: W * 0.7, h: H * 0.5 }
+    const s = Math.min(box.w / img.width, box.h / img.height)
+    img.set({ scaleX: s, scaleY: s })
+    img.setPositionByOrigin(this.visibleCentre(), 'center', 'center')
+    img.setCoords()
+    this.canvas.add(img)
+    this.canvas.setActiveObject(img)
+    this.canvas.requestRenderAll()
+    this.emitSelection()
+    return img
+  }
+
+  /** Change the selected image's crop and/or corner radius. */
+  setImageFrame(patch: Partial<CropSpec>, radius?: number) {
+    const o = this.canvas.getActiveObject()
+    if (!isCardImage(o)) return
+    if (radius !== undefined) o.radius = Math.min(0.5, Math.max(0, radius))
+    applyCrop(o, { ...(o.crop ?? DEFAULT_CROP), ...patch })
+    this.canvas.requestRenderAll()
+    this.changed()
+    this.emitSelection()
+  }
+
+  /** Move the selected library image to the card background. */
+  imageToBackground() {
+    const o = this.canvas.getActiveObject()
+    if (!isCardImage(o) || o.binding || !o.assetId) return false
+    this.setBackground({ image: { assetId: o.assetId, fit: 'cover', opacity: 1, tileSize: 0.25 } })
+    this.canvas.discardActiveObject()
+    this.canvas.remove(o)
+    this.canvas.requestRenderAll()
+    this.emitSelection()
+    return true
+  }
+
   /** Apply edits from the property panels to the selected object. */
   async updateActive(patch: Partial<Omit<TextSnapshot, 'kind'>> & Partial<Pick<ShapeSnapshot, 'height'>>) {
     const o = this.canvas.getActiveObject()
@@ -379,6 +467,14 @@ export class CardEditor {
       if ('maxHeight' in patch) o.maxHeight = patch.maxHeight && patch.maxHeight > 0 ? patch.maxHeight : undefined
       o.set(set)
       applyText(o, this.ctx, { placeholders: true })
+    } else if (isCardImage(o)) {
+      // Images scale uniformly from either side.
+      const k = patch.width !== undefined ? patch.width / o.getScaledWidth() : patch.height !== undefined ? patch.height / o.getScaledHeight() : 1
+      if (k > 0 && Number.isFinite(k) && k !== 1) {
+        const c = o.getCenterPoint()
+        o.set({ ...set, scaleX: o.scaleX * k, scaleY: o.scaleY * k })
+        o.setPositionByOrigin(c, 'center', 'center')
+      } else o.set(set)
     } else {
       if (patch.width !== undefined) set.width = Math.max(1, patch.width / (o.scaleX || 1))
       if (patch.height !== undefined) set.height = Math.max(1, patch.height / (o.scaleY || 1))
@@ -401,6 +497,11 @@ export class CardEditor {
     const off = 24 * this.unit()
     copy.set({ left: o.left + off, top: o.top + off })
     if (isCardText(copy)) applyText(copy, this.ctx, { placeholders: true })
+    if (isCardImage(copy) && isCardImage(o)) {
+      copy.shownAssetId = o.shownAssetId
+      copy.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false })
+      applyRadius(copy)
+    }
     this.canvas.add(copy)
     this.canvas.setActiveObject(copy)
     this.canvas.requestRenderAll()
@@ -466,6 +567,18 @@ export class CardEditor {
         maxHeight: o.maxHeight ? Math.round(o.maxHeight) : undefined,
         shrunk: (o.baseFontSize ?? o.fontSize) - o.fontSize > 0.5,
         overflow: !!o.overflow,
+      }
+    }
+    if (isCardImage(o)) {
+      return {
+        kind: 'image',
+        ...common,
+        width: Math.round(o.getScaledWidth()),
+        height: Math.round(o.getScaledHeight()),
+        crop: { ...(o.crop ?? DEFAULT_CROP) },
+        radius: o.radius ?? 0,
+        bound: !!o.binding,
+        assetId: o.assetId,
       }
     }
     return {

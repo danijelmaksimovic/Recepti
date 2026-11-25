@@ -142,3 +142,16 @@ export async function findUnusedAssets(): Promise<Asset[]> {
     return db.assets.filter((a) => !used.has(a.id)).toArray()
   })
 }
+
+/** Usage count for every referenced asset (recipe photos, designs, templates, covers), in one pass. */
+export async function assetUsageCounts(): Promise<Record<Id, number>> {
+  return db.transaction('r', usageTables().slice(1), async () => {
+    const counts: Record<Id, number> = {}
+    const bump = (id: Id) => (counts[id] = (counts[id] ?? 0) + 1)
+    await db.recipes.each((r) => new Set(r.photoAssetIds).forEach(bump))
+    await db.designs.each((d) => d.assetIds.forEach(bump))
+    await db.templates.each((t) => t.assetIds.forEach(bump))
+    await db.collections.each((c) => c.coverAssetId && bump(c.coverAssetId))
+    return counts
+  })
+}

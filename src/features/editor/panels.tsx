@@ -13,7 +13,8 @@ import { Icon } from '@/ui/Icon'
 import { useEditor } from './context'
 import { ColorPicker, Field, NumberInput, Seg, Slider, Toggle } from './controls'
 import { textureTile } from './fabric/background'
-import type { CardEditor, ShapeSnapshot, TextSnapshot } from './fabric/engine'
+import type { CardEditor, ImageSnapshot, ShapeSnapshot, TextSnapshot } from './fabric/engine'
+import { BackgroundImageSection } from './imagePanels'
 import { useEditorUI } from './store'
 
 // ---- add -------------------------------------------------------------------
@@ -119,7 +120,7 @@ export function BackgroundPanel() {
           <Slider label="Scale" value={bg.textureScale} min={0.5} max={3} step={0.1} onChange={(v) => update({ textureScale: v })} format={(v) => `${v.toFixed(1)}×`} />
         </>
       )}
-      <p className="text-sm text-ink-3">Background photos and your own textures arrive with the asset library.</p>
+      <BackgroundImageSection bg={bg} update={update} />
     </div>
   )
 }
@@ -397,7 +398,7 @@ export function TextStylePanel({ sel }: { sel: TextSnapshot }) {
 
 // ---- arrange (any object) ---------------------------------------------------------
 
-export function ArrangePanel({ sel }: { sel: TextSnapshot | ShapeSnapshot }) {
+export function ArrangePanel({ sel }: { sel: TextSnapshot | ShapeSnapshot | ImageSnapshot }) {
   const { editor } = useEditor()
   const up = (patch: Parameters<CardEditor['updateActive']>[0]) => void editor?.updateActive(patch)
   return (
@@ -406,7 +407,7 @@ export function ArrangePanel({ sel }: { sel: TextSnapshot | ShapeSnapshot }) {
         <NumberInput label="X" value={sel.x} onChange={(x) => up({ x })} />
         <NumberInput label="Y" value={sel.y} onChange={(y) => up({ y })} />
         <NumberInput label="W" value={sel.width} min={1} onChange={(width) => up({ width })} />
-        {sel.kind === 'shape' && <NumberInput label="H" value={sel.height} min={1} onChange={(height) => up({ height })} />}
+        {sel.kind !== 'text' && <NumberInput label="H" value={sel.height} min={1} onChange={(height) => up({ height })} />}
       </div>
       <Slider label="Rotation" value={sel.angle > 180 ? sel.angle - 360 : sel.angle} min={-180} max={180} onChange={(angle) => up({ angle })} format={(v) => `${v}°`} />
       <Slider label="Opacity" value={Math.round(sel.opacity * 100)} min={0} max={100} onChange={(v) => up({ opacity: v / 100 })} format={(v) => `${v}%`} />

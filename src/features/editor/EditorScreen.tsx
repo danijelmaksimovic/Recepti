@@ -20,12 +20,17 @@ import { toast } from '@/ui/toast'
 import { EditorContext, type EditorContextValue } from './context'
 import { CardEditor, type SelectionSnapshot } from './fabric/engine'
 import { renderThumb } from './fabric/render'
+import { filesFrom } from '@/features/assets/importer'
+import { isGraphicKind, useImporter } from '@/features/assets/hooks'
+import { ImageFramePanel, ImagesPanel, PhotosPanel } from './imagePanels'
 import { ArrangePanel, BackgroundPanel, CanvasPanel, FieldsPanel, TextEditPanel, TextStylePanel, TextToolPanel } from './panels'
 import { gridSize, useEditorUI, type SelectionPanel, type ToolId } from './store'
 
 const TOOLS: { id: ToolId; label: string; icon: IconName }[] = [
   { id: 'text', label: 'Text', icon: 'type' },
   { id: 'fields', label: 'Fields', icon: 'braces' },
+  { id: 'photos', label: 'Photos', icon: 'camera' },
+  { id: 'images', label: 'Images', icon: 'images' },
   { id: 'background', label: 'Background', icon: 'paint' },
   { id: 'canvas', label: 'Canvas', icon: 'frame' },
 ]
@@ -186,6 +191,29 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
     editor.setGrid({ show: ui.grid.show, snap: ui.grid.snap, size: gridSize(ui.grid.density, editor.page.width, editor.page.height) })
   }, [editor, ui.grid, presetId])
 
+  // Paste or drop images straight onto the card (they go to the Library too).
+  const importer = useImporter()
+  const runImport = importer.run
+  const dropFiles = useCallback(
+    async (files: File[]) => {
+      const out = await runImport(files)
+      for (const a of out?.assets ?? []) await editor?.addImage({ assetId: a.id, name: a.name || undefined, graphic: isGraphicKind(a.kind) })
+    },
+    [editor, runImport],
+  )
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const t = e.target
+      if (t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA)$/.test(t.tagName))) return
+      const files = filesFrom(e.clipboardData)
+      if (!files.length) return
+      e.preventDefault()
+      void dropFiles(files)
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [dropFiles])
+
   const setPreset = useCallback(
     (id: string, width: number, height: number) => {
       setPresetId(id)
@@ -209,21 +237,40 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
           { id: 'style', label: 'Style', icon: 'type' },
           { id: 'arrange', label: 'Arrange', icon: 'sliders' },
         ]
-      : sel?.kind === 'shape'
-        ? [{ id: 'arrange', label: 'Arrange', icon: 'sliders' }]
-        : []
+      : sel?.kind === 'image'
+        ? [
+            { id: 'crop', label: 'Crop', icon: 'crop' },
+            { id: 'arrange', label: 'Arrange', icon: 'sliders' },
+          ]
+        : sel?.kind === 'shape'
+          ? [{ id: 'arrange', label: 'Arrange', icon: 'sliders' }]
+          : []
 
   const renderSelectionPanel = (p: SelectionPanel) => {
     if (sel?.kind === 'text') {
       if (p === 'edit') return <TextEditPanel sel={sel} />
       if (p === 'style') return <TextStylePanel sel={sel} />
     }
+    if (sel?.kind === 'image' && p === 'crop') return <ImageFramePanel sel={sel} />
     if (sel && sel.kind !== 'multi' && p === 'arrange') return <ArrangePanel sel={sel} />
     return null
   }
   const closeTool = () => set({ tool: null })
+  const onDone = desktop ? undefined : closeTool
   const renderTool = (t: ToolId) =>
-    t === 'text' ? <TextToolPanel onDone={desktop ? undefined : closeTool} /> : t === 'fields' ? <FieldsPanel onDone={desktop ? undefined : closeTool} /> : t === 'background' ? <BackgroundPanel /> : <CanvasPanel />
+    t === 'text' ? (
+      <TextToolPanel onDone={onDone} />
+    ) : t === 'fields' ? (
+      <FieldsPanel onDone={onDone} />
+    ) : t === 'photos' ? (
+      <PhotosPanel recipe={recipe} onDone={onDone} />
+    ) : t === 'images' ? (
+      <ImagesPanel onDone={onDone} />
+    ) : t === 'background' ? (
+      <BackgroundPanel />
+    ) : (
+      <CanvasPanel />
+    )
 
   const zoomPct = Math.round(ui.zoom * 100)
 
@@ -278,8 +325,26 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
           )}
 
           {/* Canvas */}
-          <div ref={hostRef} className="relative min-w-0 flex-1 touch-none overflow-hidden select-none" data-testid="canvas-host">
+          <div
+            ref={hostRef}
+            className="relative min-w-0 flex-1 touch-none overflow-hidden select-none"
+            data-testid="canvas-host"
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes('Files')) e.preventDefault()
+            }}
+            onDrop={(e) => {
+              const files = filesFrom(e.dataTransfer)
+              if (!files.length) return
+              e.preventDefault()
+              void dropFiles(files)
+            }}
+          >
             <canvas ref={canvasRef} />
+            {importer.progress && (
+              <div role="status" className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-full bg-ink/85 px-3 py-1.5 text-xs font-medium text-paper">
+                Importing…
+              </div>
+            )}
           </div>
 
           {/* Desktop properties */}
@@ -289,7 +354,7 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
                 <div className="space-y-6">
                   {selPanels.map((p) => (
                     <section key={p.id}>
-                      <h2 className="mb-3 text-lg">{p.id === 'edit' ? 'Text' : p.label}</h2>
+                      <h2 className="mb-3 text-lg">{p.id === 'edit' ? 'Text' : p.id === 'crop' ? 'Frame' : p.label}</h2>
                       {renderSelectionPanel(p.id)}
                     </section>
                   ))}
@@ -299,7 +364,8 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
               ) : (
                 <div className="space-y-3 text-sm text-ink-2">
                   <h2 className="text-lg text-ink">Card</h2>
-                  <p>Select something on the card to change it, or add text and fields from the left.</p>
+                  <p>Select something on the card to change it, or add text, fields, photos and images from the left.</p>
+                  <p>Drop or paste images here to put them on the card.</p>
                   <p className="text-ink-3">Scroll to pan, pinch or Ctrl + scroll to zoom, hold Space to drag the view.</p>
                 </div>
               )}

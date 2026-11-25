@@ -1,8 +1,10 @@
 /**
- * Prepare a picked recipe photo: downscale to at most 2560 px on the long side
- * (BLUEPRINT §6) and make a small thumbnail for the cookbook grid.
- * Phase 6 moves this into a Web Worker together with the full asset importer.
+ * Prepare a picked recipe photo: downscaled to at most 2560 px (BLUEPRINT §6)
+ * in the image worker, plus a thumbnail for the cookbook grid.
  */
+import { processImage } from '@/features/assets/processClient'
+import { HEIC_MESSAGE, detectFormat } from '@/features/assets/sniff'
+
 export interface PreparedPhoto {
   blob: Blob
   thumb: Blob
@@ -11,36 +13,12 @@ export interface PreparedPhoto {
   name: string
 }
 
-const MAX = 2560
 const THUMB = 720
 
-async function draw(bitmap: ImageBitmap, max: number, quality: number): Promise<{ blob: Blob; width: number; height: number }> {
-  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height))
-  const width = Math.round(bitmap.width * scale)
-  const height = Math.round(bitmap.height * scale)
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, width, height)
-  const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', quality))
-  // Release the backing store right away; iOS has a tight total canvas budget.
-  canvas.width = canvas.height = 0
-  if (!blob) throw new Error('Could not process this photo.')
-  return { blob, width, height }
-}
-
 export async function preparePhoto(file: File): Promise<PreparedPhoto> {
-  let bitmap: ImageBitmap
-  try {
-    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
-  } catch {
-    throw new Error('This image format is not supported. Try a JPG or PNG.')
-  }
-  try {
-    const full = await draw(bitmap, MAX, 0.88)
-    const thumb = await draw(bitmap, THUMB, 0.8)
-    return { blob: full.blob, thumb: thumb.blob, width: full.width, height: full.height, name: file.name }
-  } finally {
-    bitmap.close()
-  }
+  const format = await detectFormat(file)
+  if (format === 'heic') throw new Error(HEIC_MESSAGE)
+  if (format === 'unknown' || format === 'svg') throw new Error('This image format is not supported. Try a JPG or PNG.')
+  const r = await processImage({ file, format, mode: 'photo', thumbSide: THUMB })
+  return { blob: r.blob, thumb: r.thumb, width: r.width, height: r.height, name: file.name.replace(/\.[a-z0-9]+$/i, '') }
 }
