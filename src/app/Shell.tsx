@@ -2,6 +2,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router'
 import { cx } from '@/ui/cx'
 import { Icon, type IconName } from '@/ui/Icon'
 import { InstallHint } from './InstallHint'
+import { Toaster } from './Toaster'
 import { UpdatePrompt } from './UpdatePrompt'
 
 const tabs: { to: string; label: string; icon: IconName; end?: boolean }[] = [
@@ -89,6 +90,7 @@ export function Shell() {
       </nav>
 
       <UpdatePrompt />
+      <Toaster />
     </div>
   )
 }

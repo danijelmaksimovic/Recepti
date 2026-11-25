@@ -2,13 +2,14 @@ import type { ButtonHTMLAttributes } from 'react'
 import { cx } from './cx'
 import { Icon, type IconName } from './Icon'
 
-type Variant = 'primary' | 'secondary' | 'ghost'
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 type Size = 'md' | 'lg'
 
 const variants: Record<Variant, string> = {
   primary: 'bg-accent text-accent-ink hover:brightness-105 active:brightness-95',
   secondary: 'bg-surface text-ink ring-1 ring-line hover:bg-paper-2',
   ghost: 'text-ink-2 hover:bg-paper-2',
+  danger: 'bg-danger text-paper hover:brightness-105 active:brightness-95',
 }
 const sizes: Record<Size, string> = {
   md: 'h-11 px-4 text-[15px] gap-2',
@@ -25,6 +26,7 @@ export function Button({
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size; icon?: IconName }) {
   return (
     <button
+      type="button"
       className={cx(
         'inline-flex shrink-0 select-none items-center justify-center rounded-full font-medium transition disabled:opacity-50',
         variants[variant],
@@ -47,6 +49,7 @@ export function IconButton({
 }: ButtonHTMLAttributes<HTMLButtonElement> & { icon: IconName; label: string }) {
   return (
     <button
+      type="button"
       aria-label={label}
       title={label}
       className={cx(

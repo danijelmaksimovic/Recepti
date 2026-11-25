@@ -16,7 +16,7 @@
 - [x] Phase 1 – Architecture & blueprint
 - [x] Phase 2 – Design system, navigation, PWA shell (done, 2026-11-25) · live on GitHub Pages, installs on iPhone
 - [x] Phase 3 – Storage & data models (done, 2026-11-25)
-- [ ] Phase 4 – Recipe management
+- [x] Phase 4 – Recipe management (screens wired to Dexie; awaiting review)
 - [ ] Phase 5 – Card Designer foundations
 - [ ] Phase 6 – Asset import & library
 - [ ] Phase 7 – Manipulation, layers, sketch pad
@@ -44,3 +44,11 @@
 ## Open items
 - Hosting: GitHub Pages, deployed by .github/workflows/deploy.yml on push to main.
 - Tablet used for drawing (iPad / Android / Windows) → stylus test target.
+
+## Phase 4 notes
+- Screens: Home (search, category/favorite chips, sort, Favorites + Collections rows, masonry grid), Recipe detail (tick-off ingredients, ⋯ menu: edit/duplicate/collections/delete), Recipe form (`/recipes/new`, `/recipes/:id/edit`), Collection page, Settings › Categories & collections.
+- One-line ingredient entry parsed by `src/domain/ingredients.ts`; a line ending in ":" starts a group.
+- Drag reorder (`ui/Sortable`) uses Pointer Events and only shifts rows visually until release; grip also takes ArrowUp/Down.
+- Main photo: downscaled to 2560 px + 720 px thumb on the main thread (moves to a worker in Phase 6).
+- Component tests: Testing Library + jsdom (`// @vitest-environment jsdom`), helper `src/test/render.tsx`.
+- `Button`/`Chip` default to `type="button"` so sheets inside forms never submit them.
