@@ -14,8 +14,8 @@
 
 ## Progress
 - [x] Phase 1 – Architecture & blueprint
-- [~] Phase 2 – Design system, navigation, PWA shell (done, 2026-11-25) · deploy pending hosting choice
-- [ ] Phase 3 – Storage & data models
+- [x] Phase 2 – Design system, navigation, PWA shell (done, 2026-11-25) · live on GitHub Pages, installs on iPhone
+- [x] Phase 3 – Storage & data models (done, 2026-11-25)
 - [ ] Phase 4 – Recipe management
 - [ ] Phase 5 – Card Designer foundations
 - [ ] Phase 6 – Asset import & library
@@ -32,6 +32,15 @@
 - `/settings/design` is a living design-system reference.
 - Playwright WebKit is not installed in the cloud container; checks ran in Chromium with iPhone emulation.
 
+## Phase 3 notes
+- `src/db`: Dexie schema v1 (`schema.ts`), repositories in `repos/`, public API via `@/db`. UI must import from `@/db`, never Dexie.
+- Timestamps are ms since epoch. Built-in categories use stable ids `builtin-<name>` so backups merge across devices; they can be renamed, not deleted.
+- Assets: SHA-256 dedup on `addAsset`; `countAssetUsage` covers recipe photos, design/template `assetIds` (recomputed from canvas JSON on every save) and collection covers. Only `photo` assets are auto-removed (on recipe delete or photo removal) and only when unused.
+- First design becomes primary; deleting the primary hands it to the most recently edited one. Templates are copied into designs.
+- Writes go through `guardWrite`: quota errors become `StorageFullError`, and `onStorageError` listeners can show a toast (wired in Phase 4).
+- Tests: `npm test` (Vitest + fake-indexeddb). CI runs tests + build on PRs; deploy runs tests before building.
+- Schema changes: add a new `this.version(n)` block; never edit a published one.
+
 ## Open items
-- Hosting: GitHub Pages (chosen 2026-11-25), deployed by .github/workflows/deploy.yml on push to main. Repo Settings > Pages > Source must be "GitHub Actions".
+- Hosting: GitHub Pages, deployed by .github/workflows/deploy.yml on push to main.
 - Tablet used for drawing (iPad / Android / Windows) → stylus test target.
