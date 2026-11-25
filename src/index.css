@@ -21,6 +21,7 @@
   --color-accent-soft: var(--accent-soft);
   --color-herb: var(--herb);
   --color-herb-soft: var(--herb-soft);
+  --color-danger: var(--danger);
 
   --radius-card: 1.25rem;
   --shadow-card: 0 1px 2px rgb(60 40 20 / 0.06), 0 8px 24px -12px rgb(60 40 20 / 0.18);
@@ -41,6 +42,7 @@
   --accent-soft: #f3dccf;
   --herb: #5f6e42;
   --herb-soft: #e3e6d2;
+  --danger: #b3261e;
 
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -63,6 +65,7 @@
     --accent-soft: #4a2c1f;
     --herb: #a9b784;
     --herb-soft: #333827;
+    --danger: #f2b8b5;
   }
 }
 

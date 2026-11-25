@@ -23,7 +23,7 @@ export function Page({
         <div className="min-w-0">
           {back && <IconButton icon="chevronLeft" label="Back" onClick={() => navigate(-1)} className="-ml-3 mb-1" />}
           {eyebrow && <p className="text-xs font-semibold tracking-[0.14em] text-accent uppercase">{eyebrow}</p>}
-          <h1 className="truncate text-[2rem] leading-tight sm:text-4xl">{title}</h1>
+          <h1 className="text-[2rem] leading-tight text-balance [overflow-wrap:anywhere] sm:text-4xl">{title}</h1>
         </div>
         {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
       </header>

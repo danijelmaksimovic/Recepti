@@ -81,6 +81,13 @@ export function SettingsScreen() {
           </p>
         </Group>
 
+        <Group icon="folder" title="Categories & collections">
+          <p className="text-ink-2">Add your own categories, rename the built-in ones, and arrange collections like Family recipes or Recipes to try.</p>
+          <Link to="/settings/organize" className="mt-3 inline-flex items-center gap-1 font-medium text-accent">
+            Organize <Icon name="chevronRight" size={18} />
+          </Link>
+        </Group>
+
         <Group icon="sparkle" title="About">
           <p className="text-ink-2">My Recipe Book · version {__APP_VERSION__}</p>
           <Link to="/settings/design" className="mt-3 inline-flex items-center gap-1 font-medium text-accent">
