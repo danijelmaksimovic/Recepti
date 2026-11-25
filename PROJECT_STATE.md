@@ -41,6 +41,15 @@
 - Tests: `npm test` (Vitest + fake-indexeddb). CI runs tests + build on PRs; deploy runs tests before building.
 - Schema changes: add a new `this.version(n)` block; never edit a published one.
 
+## Phase 5 notes
+- Fabric 7.4 (centre origins by default), zustand for editor UI state. Editor route `/studio/cards/:designId` is lazy-loaded with the card fonts.
+- Design JSON is our own envelope `{version: 1, background, objects}` (`src/domain/card/doc.ts`) with migrators; text stores `sourceText` tokens, never resolved content.
+- Fields `{{recipe.*}}` resolved in `src/domain/card/tokens.ts`; list styles; optional shrink-to-fit box (`maxHeight`).
+- Background = colour + generated textures (paper, linen, dots, grid, ruled, stripes, gingham); painted by both the editor and the offscreen renderer, which re-renders from JSON for thumbnails (and exports in Phase 9).
+- Autosave 1 s after changes + on leaving. 9 bundled OFL fonts (Latin Extended; Cyrillic where the family has it).
+- `npm run e2e`: Playwright, Chromium desktop + iPhone emulation (`--project=webkit` where WebKit is installed).
+- Deferred to Phase 7: undo/redo, layers, lock, align, smart guides, z-order.
+
 ## Open items
 - Hosting: GitHub Pages, deployed by .github/workflows/deploy.yml on push to main.
 - Tablet used for drawing (iPad / Android / Windows) → stylus test target.

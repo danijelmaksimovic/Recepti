@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { getAsset, listCategories, listCollections } from '@/db'
+import { getAsset, getDesign, listCategories, listCollections } from '@/db'
 import type { Category, Collection, Id } from '@/domain/types'
 
 /** Object URL for an asset's thumbnail (or full image), revoked when no longer needed. */
@@ -8,6 +8,13 @@ export function useAssetUrl(assetId: Id | undefined, variant: 'thumb' | 'full' =
   const asset = useLiveQuery(() => (assetId ? getAsset(assetId) : undefined), [assetId])
   const blob = asset ? (variant === 'thumb' ? (asset.thumb ?? asset.blob) : asset.blob) : undefined
   return useBlobUrl(blob)
+}
+
+/** Object URL and aspect ratio of a design's thumbnail. */
+export function useDesignThumb(designId: Id | undefined): { url?: string; aspect: number } | undefined {
+  const design = useLiveQuery(() => (designId ? getDesign(designId) : undefined), [designId])
+  const url = useBlobUrl(design?.thumb)
+  return design ? { url, aspect: design.width / design.height } : undefined
 }
 
 export function useBlobUrl(blob: Blob | undefined): string | undefined {

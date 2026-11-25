@@ -1,0 +1,21 @@
+/* Card fonts (OFL). All subsets are included so Latin Extended (č ć š ž đ) and
+   Cyrillic render where the family has them; browsers fetch only the subset a
+   text needs, and the service worker precaches the files for offline use. */
+@import '@fontsource/fraunces/600-italic.css';
+@import '@fontsource/playfair-display/400.css';
+@import '@fontsource/playfair-display/700.css';
+@import '@fontsource/playfair-display/400-italic.css';
+@import '@fontsource/playfair-display/700-italic.css';
+@import '@fontsource/lora/400.css';
+@import '@fontsource/lora/700.css';
+@import '@fontsource/lora/400-italic.css';
+@import '@fontsource/lora/700-italic.css';
+@import '@fontsource/josefin-sans/400.css';
+@import '@fontsource/josefin-sans/700.css';
+@import '@fontsource/abril-fatface/400.css';
+@import '@fontsource/amatic-sc/400.css';
+@import '@fontsource/amatic-sc/700.css';
+@import '@fontsource/caveat/400.css';
+@import '@fontsource/caveat/700.css';
+@import '@fontsource/dancing-script/400.css';
+@import '@fontsource/dancing-script/700.css';

@@ -11,6 +11,7 @@ import {
   getRecipe,
   getTemplate,
   listDesigns,
+  listRecentDesigns,
   saveDesign,
   saveDesignAsTemplate,
   setPrimaryDesign,
@@ -88,5 +89,19 @@ describe('designs and templates', () => {
     expect(t.name).toBe('Mine')
     expect(t.builtIn).toBe(false)
     expect(t.assetIds).toEqual(['a'])
+  })
+})
+
+describe('listRecentDesigns', () => {
+  it('returns designs across recipes, most recently edited first', async () => {
+    const a = await createRecipe({ name: 'A' })
+    const b = await createRecipe({ name: 'B' })
+    const d1 = await createDesign({ recipeId: a.id, preset: 'p', width: 1, height: 1, canvas: {} })
+    const d2 = await createDesign({ recipeId: b.id, preset: 'p', width: 1, height: 1, canvas: {} })
+    await new Promise((r) => setTimeout(r, 5))
+    await saveDesign(d1.id, { name: 'edited' })
+    const recent = await listRecentDesigns(10)
+    expect(recent.map((d) => d.id).slice(0, 2)).toEqual([d1.id, d2.id])
+    expect(await listRecentDesigns(1)).toHaveLength(1)
   })
 })
