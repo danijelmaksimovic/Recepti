@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { createBrowserRouter } from 'react-router'
 import { CollectionScreen } from '@/features/collections/CollectionScreen'
 import { LibraryScreen } from '@/features/library/LibraryScreen'
@@ -10,8 +11,19 @@ import { SettingsScreen } from '@/features/settings/SettingsScreen'
 import { StudioScreen } from '@/features/studio/StudioScreen'
 import { Shell } from './Shell'
 
+// Fabric and the card fonts load only when the Studio editor opens.
+const EditorScreen = lazy(() => import('@/features/editor/EditorScreen').then((m) => ({ default: m.EditorScreen })))
+
 export const router = createBrowserRouter(
   [
+    {
+      path: 'studio/cards/:designId',
+      element: (
+        <Suspense fallback={<div className="h-dvh bg-paper-2" />}>
+          <EditorScreen />
+        </Suspense>
+      ),
+    },
     {
       element: <Shell />,
       children: [

@@ -13,7 +13,8 @@ import { Icon, type IconName } from '@/ui/Icon'
 import { EmptyState, Page } from '@/ui/Page'
 import { Sheet } from '@/ui/Sheet'
 import { toast } from '@/ui/toast'
-import { useAssetUrl, useCategories, useCollections } from './hooks'
+import { DesignsStrip } from '@/features/studio/DesignsStrip'
+import { useAssetUrl, useCategories, useCollections, useDesignThumb } from './hooks'
 
 export function RecipeDetailScreen() {
   const { id = '' } = useParams()
@@ -33,6 +34,7 @@ function RecipeDetail({ recipe }: { recipe: Recipe }) {
   const { byId: categoryById } = useCategories()
   const collections = useCollections()
   const photo = useAssetUrl(recipe.photoAssetId, 'full')
+  const card = useDesignThumb(recipe.primaryDesignId)
   const [menu, setMenu] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -75,9 +77,13 @@ function RecipeDetail({ recipe }: { recipe: Recipe }) {
     >
       <div className="grid gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-start lg:gap-10">
         <div className="lg:sticky lg:top-6">
-          <div className={cx('overflow-hidden rounded-card shadow-card ring-1 ring-line/60', !photo && 'bg-accent-soft')}>
+          <div className={cx('overflow-hidden rounded-card shadow-card ring-1 ring-line/60', !photo && !card?.url && 'bg-accent-soft')}>
             {photo ? (
               <img src={photo} alt="" className="aspect-[4/3] w-full object-cover" />
+            ) : card?.url ? (
+              <button type="button" onClick={() => navigate(`/studio/cards/${recipe.primaryDesignId}`)} className="block w-full bg-paper-2 p-6" aria-label="Open main card in Studio">
+                <img src={card.url} alt="" className="mx-auto max-h-[60dvh] rounded-md shadow-card" style={{ aspectRatio: String(card.aspect) }} />
+              </button>
             ) : (
               <div className="flex aspect-[4/3] items-center justify-center p-8">
                 <p className="text-center font-display text-3xl leading-tight text-ink/80 italic">{recipe.name}</p>
@@ -142,12 +148,7 @@ function RecipeDetail({ recipe }: { recipe: Recipe }) {
           )}
 
           <Block title="Recipe cards">
-            <div className="flex items-center gap-4 rounded-2xl border border-dashed border-line p-4">
-              <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
-                <Icon name="palette" />
-              </span>
-              <p className="text-sm text-ink-2">Designing cards for this recipe arrives with the Design Studio in the next phase.</p>
-            </div>
+            <DesignsStrip recipe={recipe} />
           </Block>
 
           <p className="text-sm text-ink-3">

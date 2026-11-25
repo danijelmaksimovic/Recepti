@@ -116,3 +116,8 @@ export async function deleteDesign(id: Id): Promise<void> {
     }),
   )
 }
+
+/** Most recently edited designs across all recipes (Studio home). */
+export function listRecentDesigns(limit = 24): Promise<Design[]> {
+  return db.designs.orderBy('updatedAt').reverse().limit(limit).toArray()
+}

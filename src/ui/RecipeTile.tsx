@@ -11,6 +11,7 @@ export function RecipeTile({
   image,
   tint = 'accent',
   tall,
+  aspect,
   favorite,
 }: {
   name: string
@@ -18,6 +19,8 @@ export function RecipeTile({
   image?: string
   tint?: 'accent' | 'herb' | 'paper'
   tall?: boolean
+  /** Width / height of the image (e.g. a card design); overrides `tall`. */
+  aspect?: number
   favorite?: boolean
 }) {
   const tints = { accent: 'bg-accent-soft', herb: 'bg-herb-soft', paper: 'bg-paper-2' }
@@ -26,9 +29,10 @@ export function RecipeTile({
       <div
         className={cx(
           'relative overflow-hidden rounded-card shadow-card ring-1 ring-line/60 transition group-hover:-translate-y-0.5',
-          tall ? 'aspect-[4/5]' : 'aspect-[4/3]',
+          !aspect && (tall ? 'aspect-[4/5]' : 'aspect-[4/3]'),
           !image && tints[tint],
         )}
+        style={aspect ? { aspectRatio: String(aspect) } : undefined}
       >
         {image ? (
           <img src={image} alt="" className="size-full object-cover" loading="lazy" />
