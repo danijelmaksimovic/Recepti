@@ -10,7 +10,7 @@
 export const CARD_DOC_VERSION = 1
 
 /** Extra object properties that are always serialized (BLUEPRINT §5). */
-export const CUSTOM_PROPS = ['name', 'sourceText', 'listStyle', 'baseFontSize', 'maxHeight', 'binding', 'assetId', 'locked', 'crop', 'radius'] as const
+export const CUSTOM_PROPS = ['uid', 'name', 'sourceText', 'listStyle', 'baseFontSize', 'maxHeight', 'binding', 'assetId', 'locked', 'crop', 'radius'] as const
 
 export type TextureKind = 'none' | 'dots' | 'grid' | 'lines' | 'diagonal' | 'gingham' | 'paper' | 'linen'
 

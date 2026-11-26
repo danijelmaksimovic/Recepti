@@ -25,12 +25,15 @@ import { isGraphicKind, useImporter } from '@/features/assets/hooks'
 import { ImageFramePanel, ImagesPanel, PhotosPanel } from './imagePanels'
 import { ArrangePanel, BackgroundPanel, CanvasPanel, FieldsPanel, TextEditPanel, TextStylePanel, TextToolPanel } from './panels'
 import { gridSize, useEditorUI, type SelectionPanel, type ToolId } from './store'
+import { LayersPanel, LockedNotice, MultiPanel } from './layersPanel'
+import { DrawingHost, EditDrawingButton } from './drawing'
 
 const TOOLS: { id: ToolId; label: string; icon: IconName }[] = [
   { id: 'text', label: 'Text', icon: 'type' },
   { id: 'fields', label: 'Fields', icon: 'braces' },
   { id: 'photos', label: 'Photos', icon: 'camera' },
   { id: 'images', label: 'Images', icon: 'images' },
+  { id: 'draw', label: 'Draw', icon: 'scribble' },
   { id: 'background', label: 'Background', icon: 'paint' },
   { id: 'canvas', label: 'Canvas', icon: 'frame' },
 ]
@@ -147,16 +150,18 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
       onSelection: (selection: SelectionSnapshot) => {
         const prev = useEditorUI.getState().selection
         // Close selection panels when the selection goes away or changes kind.
-        const panel = !selection || selection.kind === 'multi' || (prev && prev.kind !== selection.kind) ? null : useEditorUI.getState().panel
+        const panel = !selection || selection.locked || (prev && prev.kind !== selection.kind) ? null : useEditorUI.getState().panel
         set({ selection, panel: selection ? panel : null })
       },
+      onLayers: (layers) => set({ layers }),
+      onHistory: (history) => set({ history }),
       onZoom: (zoom, fitZoom) => set({ zoom, fitZoom }),
       onEditText: () => set({ panel: 'edit', tool: null }),
     })
     editorRef.current = ed
     // Lets end-to-end tests inspect the canvas in dev builds.
     if (import.meta.env.DEV) (window as unknown as { __cardEditor?: CardEditor }).__cardEditor = ed
-    set({ selection: null, tool: null, panel: null, save: 'saved' })
+    set({ selection: null, tool: null, panel: null, save: 'saved', layers: [], history: { canUndo: false, canRedo: false }, sketch: null })
     ed.load(doc).then(() => setEditor(ed), (e) => {
       console.error(e)
       toast('This card could not be fully loaded.', { tone: 'error' })
@@ -186,9 +191,13 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
 
   useEffect(() => editor?.setTokenContext(ctx), [editor, ctx])
   useEffect(() => editor?.setDark(dark), [editor, dark])
+  // The sketch pad has its own shortcuts.
+  useEffect(() => {
+    if (editor) editor.keysEnabled = !ui.sketch
+  }, [editor, ui.sketch])
   useEffect(() => {
     if (!editor) return
-    editor.setGrid({ show: ui.grid.show, snap: ui.grid.snap, size: gridSize(ui.grid.density, editor.page.width, editor.page.height) })
+    editor.setGrid({ show: ui.grid.show, snap: ui.grid.snap, guides: ui.grid.guides, size: gridSize(ui.grid.density, editor.page.width, editor.page.height) })
   }, [editor, ui.grid, presetId])
 
   // Paste or drop images straight onto the card (they go to the Library too).
@@ -231,7 +240,11 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
 
   const sel = ui.selection
   const selPanels: { id: SelectionPanel; label: string; icon: IconName }[] =
-    sel?.kind === 'text'
+    sel?.locked
+      ? []
+      : sel?.kind === 'multi'
+        ? [{ id: 'align', label: 'Arrange', icon: 'sliders' }]
+        : sel?.kind === 'text'
       ? [
           { id: 'edit', label: 'Edit', icon: 'pen' },
           { id: 'style', label: 'Style', icon: 'type' },
@@ -251,8 +264,15 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
       if (p === 'edit') return <TextEditPanel sel={sel} />
       if (p === 'style') return <TextStylePanel sel={sel} />
     }
-    if (sel?.kind === 'image' && p === 'crop') return <ImageFramePanel sel={sel} />
+    if (sel?.kind === 'image' && p === 'crop')
+      return (
+        <>
+          <EditDrawingButton assetId={sel.assetId} className="mb-4 w-full" />
+          <ImageFramePanel sel={sel} />
+        </>
+      )
     if (sel && sel.kind !== 'multi' && p === 'arrange') return <ArrangePanel sel={sel} />
+    if (sel?.kind === 'multi' && p === 'align') return <MultiPanel count={sel.count} locked={sel.locked} />
     return null
   }
   const closeTool = () => set({ tool: null })
@@ -266,13 +286,18 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
       <PhotosPanel recipe={recipe} onDone={onDone} />
     ) : t === 'images' ? (
       <ImagesPanel onDone={onDone} />
-    ) : t === 'background' ? (
+    ) : t === 'draw' ? null : t === 'background' ? (
       <BackgroundPanel />
     ) : (
       <CanvasPanel />
     )
 
   const zoomPct = Math.round(ui.zoom * 100)
+  const pickTool = (id: ToolId) => {
+    if (id === 'draw') return set({ sketch: {}, tool: null, panel: null })
+    set({ tool: ui.tool === id ? null : id, panel: null })
+  }
+  const unlock = () => editor?.lockActive(false)
 
   return (
     <EditorContext.Provider value={ctxValue}>
@@ -287,6 +312,8 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
             </p>
           </div>
           <SaveBadge state={ui.save} onRetry={() => void save()} />
+          <IconButton icon="undo" label="Undo" disabled={!ui.history.canUndo && ui.save !== 'dirty'} onClick={() => void editor?.undo()} className="disabled:opacity-30" />
+          <IconButton icon="redo" label="Redo" disabled={!ui.history.canRedo} onClick={() => void editor?.redo()} className="disabled:opacity-30" />
           <div className="hidden items-center gap-0.5 sm:flex">
             <IconButton icon="zoomOut" label="Zoom out" onClick={() => editor?.zoomBy(0.8)} />
             <button type="button" onClick={() => editor?.fit()} className="h-9 min-w-14 rounded-full px-2 text-sm font-medium text-ink-2 tabular-nums hover:bg-paper-2" title="Fit to screen">
@@ -301,8 +328,15 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
             icon="grid"
             label={ui.grid.show ? 'Hide grid' : 'Show grid'}
             aria-pressed={ui.grid.show}
-            className={ui.grid.show ? 'text-accent' : undefined}
+            className={cx('max-sm:hidden', ui.grid.show && 'text-accent')}
             onClick={() => ui.setGrid({ show: !ui.grid.show })}
+          />
+          <IconButton
+            icon="layers"
+            label={ui.showLayers ? 'Hide layers' : 'Show layers'}
+            aria-pressed={ui.showLayers}
+            className={ui.showLayers ? 'text-accent' : undefined}
+            onClick={() => set({ showLayers: !ui.showLayers, ...(desktop ? {} : { tool: null, panel: null }) })}
           />
         </header>
 
@@ -312,7 +346,7 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
             <>
               <nav aria-label="Tools" className="flex w-20 shrink-0 flex-col items-center gap-1 border-r border-line bg-paper-2/50 py-3">
                 {TOOLS.map((t) => (
-                  <RailButton key={t.id} {...t} active={ui.tool === t.id} onClick={() => set({ tool: ui.tool === t.id ? null : t.id })} />
+                  <RailButton key={t.id} {...t} active={ui.tool === t.id} onClick={() => pickTool(t.id)} />
                 ))}
               </nav>
               {ui.tool && (
@@ -350,7 +384,15 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
           {/* Desktop properties */}
           {desktop && (
             <aside aria-label="Properties" className="w-80 shrink-0 overflow-y-auto border-l border-line bg-surface p-4">
-              {sel && sel.kind !== 'multi' ? (
+              {ui.showLayers && (
+                <section aria-label="Layers" className="mb-5 border-b border-line pb-4">
+                  <PanelHeader title="Layers" onClose={() => set({ showLayers: false })} />
+                  <LayersPanel />
+                </section>
+              )}
+              {sel?.locked ? (
+                <LockedNotice onUnlock={unlock} />
+              ) : sel && sel.kind !== 'multi' ? (
                 <div className="space-y-6">
                   {selPanels.map((p) => (
                     <section key={p.id}>
@@ -360,25 +402,25 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
                   ))}
                 </div>
               ) : sel?.kind === 'multi' ? (
-                <p className="text-ink-2">{sel.count} items selected.</p>
+                <MultiPanel count={sel.count} locked={sel.locked} />
               ) : (
                 <div className="space-y-3 text-sm text-ink-2">
                   <h2 className="text-lg text-ink">Card</h2>
                   <p>Select something on the card to change it, or add text, fields, photos and images from the left.</p>
-                  <p>Drop or paste images here to put them on the card.</p>
-                  <p className="text-ink-3">Scroll to pan, pinch or Ctrl + scroll to zoom, hold Space to drag the view.</p>
+                  <p>Drop or paste images here to put them on the card. Use Draw to sketch over the card with a pen or your finger.</p>
+                  <p className="text-ink-3">Scroll to pan, pinch or Ctrl + scroll to zoom, hold Space to drag the view. Shift-click or drag a box to select several; Ctrl + Z undoes.</p>
                 </div>
               )}
             </aside>
           )}
 
           {/* Mobile sheet */}
-          {!desktop && (ui.tool || (ui.panel && sel)) && (
+          {!desktop && (ui.tool || (ui.panel && sel) || ui.showLayers) && (
             <MobileSheet
-              title={ui.tool ? TOOLS.find((t) => t.id === ui.tool)!.label : selPanels.find((p) => p.id === ui.panel)?.label ?? ''}
-              onClose={() => set({ tool: null, panel: null })}
+              title={ui.tool ? TOOLS.find((t) => t.id === ui.tool)!.label : ui.panel && sel ? selPanels.find((p) => p.id === ui.panel)?.label ?? '' : 'Layers'}
+              onClose={() => set({ tool: null, panel: null, showLayers: false })}
             >
-              {ui.tool ? renderTool(ui.tool) : ui.panel && renderSelectionPanel(ui.panel)}
+              {ui.tool ? renderTool(ui.tool) : ui.panel && sel ? renderSelectionPanel(ui.panel) : <LayersPanel />}
             </MobileSheet>
           )}
         </div>
@@ -387,10 +429,15 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
         {!desktop && (
           <nav aria-label="Tools" className="z-20 shrink-0 border-t border-line bg-paper/95 pb-safe backdrop-blur">
             <ul className="no-scrollbar flex h-16 items-stretch justify-around gap-1 overflow-x-auto px-2">
-              {sel && sel.kind !== 'multi' ? (
+              {sel?.locked ? (
+                <>
+                  <BarButton id="unlock" label="Unlock" icon="unlock" onClick={unlock} />
+                  <BarButton id="done" label="Done" icon="check" onClick={() => editor?.deselect()} />
+                </>
+              ) : sel && sel.kind !== 'multi' ? (
                 <>
                   {selPanels.map((p) => (
-                    <BarButton key={p.id} {...p} active={ui.panel === p.id} onClick={() => set({ panel: ui.panel === p.id ? null : p.id, tool: null })} />
+                    <BarButton key={p.id} {...p} active={ui.panel === p.id} onClick={() => set({ panel: ui.panel === p.id ? null : p.id, tool: null, showLayers: false })} />
                   ))}
                   <BarButton id="dup" label="Duplicate" icon="copy" onClick={() => void editor?.duplicateActive()} />
                   <BarButton id="del" label="Delete" icon="trash" onClick={() => editor?.deleteActive()} />
@@ -398,16 +445,18 @@ function Editor({ design, recipe }: { design: Design; recipe: Recipe }) {
                 </>
               ) : sel?.kind === 'multi' ? (
                 <>
+                  <BarButton id="align" label="Arrange" icon="sliders" active={ui.panel === 'align'} onClick={() => set({ panel: ui.panel === 'align' ? null : 'align', tool: null, showLayers: false })} />
                   <BarButton id="del" label="Delete" icon="trash" onClick={() => editor?.deleteActive()} />
                   <BarButton id="done" label="Done" icon="check" onClick={() => editor?.deselect()} />
                 </>
               ) : (
-                TOOLS.map((t) => <BarButton key={t.id} {...t} active={ui.tool === t.id} onClick={() => set({ tool: ui.tool === t.id ? null : t.id, panel: null })} />)
+                TOOLS.map((t) => <BarButton key={t.id} {...t} active={ui.tool === t.id} onClick={() => { set({ showLayers: false }); pickTool(t.id) }} />)
               )}
             </ul>
           </nav>
         )}
       </div>
+      <DrawingHost ctx={ctx} />
       <Toaster />
     </EditorContext.Provider>
   )

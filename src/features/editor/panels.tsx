@@ -15,6 +15,7 @@ import { ColorPicker, Field, NumberInput, Seg, Slider, Toggle } from './controls
 import { textureTile } from './fabric/background'
 import type { CardEditor, ImageSnapshot, ShapeSnapshot, TextSnapshot } from './fabric/engine'
 import { BackgroundImageSection } from './imagePanels'
+import { AlignControls, OrderControls } from './layersPanel'
 import { useEditorUI } from './store'
 
 // ---- add -------------------------------------------------------------------
@@ -197,6 +198,8 @@ export function CanvasPanel() {
       <div className="border-t border-line pt-3">
         <Toggle icon="grid" label="Show grid" checked={grid.show} onChange={(show) => setGrid({ show })} />
         <Toggle icon="move" label="Snap to grid" checked={grid.snap} onChange={(snap) => setGrid({ snap })} />
+        <Toggle icon="objAlignHCenter" label="Smart guides" checked={grid.guides && !grid.snap} onChange={(guides) => setGrid({ guides, ...(guides ? { snap: false } : {}) })} />
+        <p className="text-xs text-ink-3">Smart guides snap to the card’s edges and centre and to other items while you drag. Hold Alt to drag freely.</p>
         <div className="mt-2">
           <Seg
             label="Grid size"
@@ -403,6 +406,7 @@ export function ArrangePanel({ sel }: { sel: TextSnapshot | ShapeSnapshot | Imag
   const up = (patch: Parameters<CardEditor['updateActive']>[0]) => void editor?.updateActive(patch)
   return (
     <div className="space-y-4">
+      <NameInput value={sel.name} onChange={(name) => up({ name })} />
       <div className="grid grid-cols-2 gap-2">
         <NumberInput label="X" value={sel.x} onChange={(x) => up({ x })} />
         <NumberInput label="Y" value={sel.y} onChange={(y) => up({ y })} />
@@ -416,7 +420,12 @@ export function ArrangePanel({ sel }: { sel: TextSnapshot | ShapeSnapshot | Imag
           <ColorPicker label="Shape colour" value={sel.fill} onChange={(fill) => up({ fill })} />
         </Field>
       )}
+      <AlignControls count={1} />
+      <OrderControls />
       <div className="flex gap-2 pt-1">
+        <Button variant="secondary" icon="lock" className="flex-1" onClick={() => editor?.lockActive(true)}>
+          Lock
+        </Button>
         <Button variant="secondary" icon="copy" className="flex-1" onClick={() => void editor?.duplicateActive()}>
           Duplicate
         </Button>
@@ -425,5 +434,25 @@ export function ArrangePanel({ sel }: { sel: TextSnapshot | ShapeSnapshot | Imag
         </Button>
       </div>
     </div>
+  )
+}
+
+/** Layer name; saved when you leave the field or press Return. */
+function NameInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  const commit = () => draft.trim() !== value && onChange(draft.trim())
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-xs font-semibold tracking-wide text-ink-3 uppercase">Layer name</span>
+      <input
+        value={draft}
+        placeholder="Unnamed"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget.blur(), commit())}
+        className="h-11 w-full rounded-xl bg-paper-2 px-3 text-base outline-none focus:ring-2 focus:ring-accent/50"
+      />
+    </label>
   )
 }
