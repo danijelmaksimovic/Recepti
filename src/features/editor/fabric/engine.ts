@@ -3,9 +3,11 @@
  * grid and snapping, text binding and serialization. React talks to it through
  * a small method surface and two callbacks, so Fabric never leaks into UI code.
  */
-import { Canvas, Point, Rect, Textbox, util, type FabricObject, type TPointerEventInfo } from 'fabric'
+import { ActiveSelection, Canvas, Point, Rect, Textbox, util, type FabricObject, type TPointerEventInfo } from 'fabric'
+import { alignBoxes, distributeBoxes, snapToGuides, unionBox, type AlignMode, type Axis, type Box, type Guide } from '@/domain/card/align'
+import { History } from '@/domain/history'
 import { DEFAULT_CROP, type CropSpec } from '@/domain/card/crop'
-import { loadAssetImage } from '@/features/assets/urls'
+import { assetUrl, loadAssetImage } from '@/features/assets/urls'
 import { stripResolvedText, fontsInDoc, type CardBackground, type CardDoc, type CardObjectJSON, CARD_DOC_VERSION, CUSTOM_PROPS } from '@/domain/card/doc'
 import { boldWeight, DEFAULT_FONT } from '@/domain/card/fonts'
 import { defaultListStyle, getField, token, type ListStyle, type TokenContext } from '@/domain/card/tokens'
@@ -19,11 +21,32 @@ export interface GridSettings {
   snap: boolean
   /** Grid spacing in card px. */
   size: number
+  /** Snap to the card and other objects while dragging (when not snapping to the grid). */
+  guides?: boolean
+}
+
+export type LayerKind = 'text' | 'field' | 'image' | 'photo' | 'shape' | 'group'
+
+export interface LayerInfo {
+  uid: string
+  name: string
+  kind: LayerKind
+  visible: boolean
+  locked: boolean
+  selected: boolean
+}
+
+export type ArrangeOp = 'front' | 'forward' | 'backward' | 'back'
+
+export interface HistoryState {
+  canUndo: boolean
+  canRedo: boolean
 }
 
 export interface TextSnapshot {
   kind: 'text'
   name: string
+  locked: boolean
   sourceText: string
   fontFamily: string
   fontSize: number
@@ -48,6 +71,7 @@ export interface TextSnapshot {
 export interface ShapeSnapshot {
   kind: 'shape'
   name: string
+  locked: boolean
   fill: string
   angle: number
   opacity: number
@@ -60,6 +84,7 @@ export interface ShapeSnapshot {
 export interface ImageSnapshot {
   kind: 'image'
   name: string
+  locked: boolean
   angle: number
   opacity: number
   x: number
@@ -73,9 +98,9 @@ export interface ImageSnapshot {
   assetId?: string
 }
 
-export type SelectionSnapshot = TextSnapshot | ShapeSnapshot | ImageSnapshot | { kind: 'multi'; count: number } | null
+export type SelectionSnapshot = TextSnapshot | ShapeSnapshot | ImageSnapshot | { kind: 'multi'; count: number; locked: boolean } | null
 
-export type ImageSource = { assetId: string; name?: string; graphic?: boolean } | { binding: typeof RECIPE_PHOTO; name?: string }
+export type ImageSource = { assetId: string; name?: string; graphic?: boolean; /** Placed width in card px. */ width?: number; /** Placed centre in card px. */ centre?: { x: number; y: number } } | { binding: typeof RECIPE_PHOTO; name?: string }
 
 export interface EditorCallbacks {
   /** The document changed and should be saved. */
@@ -84,6 +109,28 @@ export interface EditorCallbacks {
   onZoom: (zoom: number, fit: number) => void
   /** Double-click / double-tap on text. */
   onEditText?: () => void
+  onLayers?: (layers: LayerInfo[]) => void
+  onHistory?: (h: HistoryState) => void
+}
+
+let uidCounter = 0
+export const newUid = () => `o${Date.now().toString(36)}${(uidCounter++).toString(36)}${Math.random().toString(36).slice(2, 6)}`
+
+type Lockable = FabricObject & { uid?: string; locked?: boolean; name?: string }
+
+/** Locked objects can't be picked on the card or moved; the layers panel still selects them. */
+export function applyLock(o: FabricObject) {
+  const locked = !!(o as Lockable).locked
+  o.set({
+    lockMovementX: locked,
+    lockMovementY: locked,
+    lockScalingX: locked,
+    lockScalingY: locked,
+    lockRotation: locked,
+    hasControls: !locked,
+    selectable: !locked,
+    evented: !locked,
+  })
 }
 
 const WORKSPACE = { light: '#e9e0d2', dark: '#171310' }
@@ -91,7 +138,8 @@ const MAX_ZOOM = 4
 
 class CardCanvas extends Canvas {
   page!: PageSpec
-  grid: GridSettings = { show: false, snap: false, size: 40 }
+  grid: GridSettings = { show: false, snap: false, size: 40, guides: true }
+  guides: Guide[] = []
   workspace = WORKSPACE.light
   _renderBackground(ctx: CanvasRenderingContext2D) {
     ctx.fillStyle = this.workspace
@@ -133,6 +181,22 @@ class CardCanvas extends Canvas {
       ctx.strokeStyle = 'rgba(181,83,47,0.5)'
       ctx.stroke()
     }
+    // Smart guides while dragging.
+    if (this.guides.length) {
+      ctx.lineWidth = 1 / z
+      ctx.strokeStyle = '#d6336c'
+      ctx.beginPath()
+      for (const g of this.guides) {
+        if (g.axis === 'x') {
+          ctx.moveTo(g.at, g.from)
+          ctx.lineTo(g.at, g.to)
+        } else {
+          ctx.moveTo(g.from, g.at)
+          ctx.lineTo(g.to, g.at)
+        }
+      }
+      ctx.stroke()
+    }
     // Text box limits and overflow warning for the selected text.
     const active = this.getActiveObject()
     if (isCardText(active) && active.maxHeight) {
@@ -164,6 +228,12 @@ export class CardEditor {
   private pinch?: { dist: number; mid: { x: number; y: number }; zoom: number }
   private spaceDown = false
   private disposers: (() => void)[] = []
+  /** Keyboard shortcuts on (off while the sketch pad is open). */
+  keysEnabled = true
+  private history = new History<string>('')
+  private historyTimer: ReturnType<typeof setTimeout> | undefined
+  private restoring: Promise<void> = Promise.resolve()
+  private dragOthers?: Box[]
 
   constructor(el: HTMLCanvasElement, host: HTMLElement, page: PageSpec, ctx: TokenContext | undefined, cb: EditorCallbacks) {
     setupFabric()
@@ -198,8 +268,92 @@ export class CardEditor {
       this.canvas.discardActiveObject()
       this.canvas.remove(...this.canvas.getObjects())
       const objects = await enlivenCardObjects(doc.objects, this.ctx)
-      applyTextAll(objects, this.ctx, { placeholders: true })
+      this.prepareObjects(objects)
       if (objects.length) this.canvas.add(...objects)
+      this.canvas.requestRenderAll()
+    } finally {
+      this.loading = false
+    }
+    this.history.reset(this.serialize())
+    this.emitHistory()
+    this.emitSelection()
+  }
+
+  private prepareObjects(objects: FabricObject[]) {
+    applyTextAll(objects, this.ctx, { placeholders: true })
+    const seen = new Set<string>()
+    for (const o of objects as Lockable[]) {
+      if (!o.uid || seen.has(o.uid)) o.uid = newUid()
+      seen.add(o.uid)
+      applyLock(o)
+    }
+  }
+
+  // ---- history --------------------------------------------------------------
+
+  private serialize() {
+    return JSON.stringify(this.toDoc())
+  }
+
+  private emitHistory() {
+    this.cb.onHistory?.({ canUndo: this.history.canUndo, canRedo: this.history.canRedo })
+  }
+
+  /** Record the current state as an undo step (changes within a short pause merge into one). */
+  private scheduleHistory() {
+    clearTimeout(this.historyTimer)
+    this.historyTimer = setTimeout(() => this.commitHistory(), 350)
+  }
+
+  /** Record any pending change now. */
+  commitHistory() {
+    clearTimeout(this.historyTimer)
+    this.historyTimer = undefined
+    if (this.loading) return
+    if (this.history.push(this.serialize())) this.emitHistory()
+  }
+
+  get canUndo() {
+    return this.history.canUndo || this.historyTimer !== undefined
+  }
+
+  undo() {
+    return this.step('undo')
+  }
+
+  redo() {
+    return this.step('redo')
+  }
+
+  private step(dir: 'undo' | 'redo') {
+    this.restoring = this.restoring.then(async () => {
+      if (this.historyTimer !== undefined) this.commitHistory()
+      const state = dir === 'undo' ? this.history.undo() : this.history.redo()
+      if (state === undefined) return
+      await this.restore(state)
+      this.emitHistory()
+      this.cb.onChange()
+    })
+    return this.restoring
+  }
+
+  private async restore(state: string) {
+    const doc = JSON.parse(state) as CardDoc
+    const selected = new Set(this.canvas.getActiveObjects().map((o) => (o as Lockable).uid))
+    this.loading = true
+    try {
+      await ensureFonts(fontsInDoc(doc))
+      const prevImage = this.canvas.page.background.image?.assetId
+      this.canvas.page = { ...this.canvas.page, background: doc.background, image: prevImage === doc.background.image?.assetId ? this.canvas.page.image : undefined }
+      if (prevImage !== doc.background.image?.assetId) void this.syncBackgroundImage()
+      const objects = await enlivenCardObjects(doc.objects, this.ctx)
+      this.prepareObjects(objects)
+      this.canvas.discardActiveObject()
+      this.canvas.remove(...this.canvas.getObjects())
+      if (objects.length) this.canvas.add(...objects)
+      const keep = objects.filter((o) => selected.has((o as Lockable).uid))
+      if (keep.length === 1) this.canvas.setActiveObject(keep[0])
+      else if (keep.length > 1) this.canvas.setActiveObject(new ActiveSelection(keep, { canvas: this.canvas }))
       this.canvas.requestRenderAll()
     } finally {
       this.loading = false
@@ -405,9 +559,10 @@ export class CardEditor {
     const { width: W, height: H } = this.page
     const graphic = 'graphic' in source && source.graphic
     const box = graphic ? { w: Math.min(W, H) * 0.45, h: Math.min(W, H) * 0.45 } : { w: W * 0.7, h: H * 0.5 }
-    const s = Math.min(box.w / img.width, box.h / img.height)
+    const s = 'width' in source && source.width ? source.width / img.width : Math.min(box.w / img.width, box.h / img.height)
     img.set({ scaleX: s, scaleY: s })
-    img.setPositionByOrigin(this.visibleCentre(), 'center', 'center')
+    const at = 'centre' in source && source.centre ? new Point(source.centre.x, source.centre.y) : this.visibleCentre()
+    img.setPositionByOrigin(at, 'center', 'center')
     img.setCoords()
     this.canvas.add(img)
     this.canvas.setActiveObject(img)
@@ -427,6 +582,66 @@ export class CardEditor {
     this.emitSelection()
   }
 
+  /**
+   * Swap the selected image's picture for a redrawn sketch. `from`/`to` are the
+   * artboard regions the old and new images show, so the drawing keeps its
+   * size and position on the card even when its trimmed bounds change.
+   */
+  async replaceActiveImage(assetId: string, from?: { x: number; y: number; w: number; h: number }, to?: { x: number; y: number; w: number; h: number }) {
+    const o = this.canvas.getActiveObject()
+    if (!isCardImage(o) || o.binding) return
+    const url = await assetUrl(assetId)
+    if (!url) return
+    applyCrop(o, { ...DEFAULT_CROP }, false)
+    const centre = o.getCenterPoint()
+    const oldNat = o.getOriginalSize().width || 1
+    // Card px per artboard px, from the old image.
+    const k = from ? (o.scaleX * oldNat) / from.w : o.scaleX
+    await o.setSrc(url)
+    o.assetId = assetId
+    o.shownAssetId = assetId
+    const nat = o.getOriginalSize().width || 1
+    const s = to ? (k * to.w) / nat : o.scaleX
+    o.set({ scaleX: s * Math.sign(o.scaleX || 1), scaleY: s * Math.sign(o.scaleY || 1) })
+    applyCrop(o, { ...DEFAULT_CROP }, false)
+    let c = centre
+    if (from && to) {
+      const d = new Point((to.x + to.w / 2 - (from.x + from.w / 2)) * k, (to.y + to.h / 2 - (from.y + from.h / 2)) * k)
+      c = centre.add(d.rotate(util.degreesToRadians(o.angle)))
+    }
+    o.setPositionByOrigin(c, 'center', 'center')
+    o.setCoords()
+    this.canvas.requestRenderAll()
+    this.changed()
+    this.emitSelection()
+  }
+
+  /** For the sketch pad's backdrop: how card px map onto a drawing's artboard. */
+  drawingFrame(bounds: { x: number; y: number; w: number; h: number }): { scale: number; dx: number; dy: number; rotated: boolean } | null {
+    const o = this.canvas.getActiveObject()
+    if (!isCardImage(o)) return null
+    const nat = o.getOriginalSize().width || 1
+    const k = (o.scaleX * nat) / bounds.w // card px per artboard px
+    const c = o.getCenterPoint()
+    // artboard = card / k + d, with the drawing's centre landing on its bounds centre.
+    return { scale: 1 / k, dx: bounds.x + bounds.w / 2 - c.x / k, dy: bounds.y + bounds.h / 2 - c.y / k, rotated: Math.abs(o.angle % 360) > 0.5 }
+  }
+
+  /** The card as a document without one object (for drawing over it). */
+  docWithout(uid?: string): CardDoc {
+    const doc = this.toDoc()
+    return uid ? { ...doc, objects: doc.objects.filter((o) => o.uid !== uid) } : doc
+  }
+
+  activeUid(): string | undefined {
+    return (this.canvas.getActiveObject() as Lockable | undefined)?.uid
+  }
+
+  /** Card size in px. */
+  get cardSize() {
+    return { width: this.page.width, height: this.page.height }
+  }
+
   /** Move the selected library image to the card background. */
   imageToBackground() {
     const o = this.canvas.getActiveObject()
@@ -443,6 +658,7 @@ export class CardEditor {
   async updateActive(patch: Partial<Omit<TextSnapshot, 'kind'>> & Partial<Pick<ShapeSnapshot, 'height'>>) {
     const o = this.canvas.getActiveObject()
     if (!o || o.type === 'activeselection') return
+    if ((o as Lockable).locked && Object.keys(patch).some((k) => k !== 'name')) return
     const set: Record<string, unknown> = {}
     if (patch.fill !== undefined) set.fill = patch.fill
     if (patch.opacity !== undefined) set.opacity = patch.opacity
@@ -496,6 +712,9 @@ export class CardEditor {
     const copy = await o.clone([...CUSTOM_PROPS])
     const off = 24 * this.unit()
     copy.set({ left: o.left + off, top: o.top + off })
+    ;(copy as Lockable).uid = newUid()
+    ;(copy as Lockable).locked = false
+    applyLock(copy)
     if (isCardText(copy)) applyText(copy, this.ctx, { placeholders: true })
     if (isCardImage(copy) && isCardImage(o)) {
       copy.shownAssetId = o.shownAssetId
@@ -509,7 +728,7 @@ export class CardEditor {
   }
 
   deleteActive() {
-    const objs = this.canvas.getActiveObjects()
+    const objs = this.canvas.getActiveObjects().filter((o) => !(o as Lockable).locked)
     if (!objs.length) return
     this.canvas.discardActiveObject()
     this.canvas.remove(...objs)
@@ -523,26 +742,171 @@ export class CardEditor {
     this.emitSelection()
   }
 
+  // ---- layers & arranging ---------------------------------------------------
+
+  /** Layers top-most first, as the layers panel lists them. */
+  layers(): LayerInfo[] {
+    const active = new Set(this.canvas.getActiveObjects())
+    return this.canvas
+      .getObjects()
+      .map((o) => {
+        const l = o as Lockable
+        return { uid: l.uid ?? '', name: layerName(o), kind: layerKind(o), visible: o.visible !== false, locked: !!l.locked, selected: active.has(o) }
+      })
+      .reverse()
+  }
+
+  private byUid(uid: string) {
+    return this.canvas.getObjects().find((o) => (o as Lockable).uid === uid)
+  }
+
+  private select(objs: FabricObject[]) {
+    this.canvas.discardActiveObject()
+    if (objs.length === 1) this.canvas.setActiveObject(objs[0])
+    else if (objs.length > 1) this.canvas.setActiveObject(new ActiveSelection(objs, { canvas: this.canvas }))
+    this.canvas.requestRenderAll()
+    this.emitSelection()
+  }
+
+  /** Select a layer; `toggle` adds it to (or removes it from) the current selection. */
+  selectLayer(uid: string, toggle = false) {
+    const o = this.byUid(uid)
+    if (!o) return
+    if (!toggle) return this.select([o])
+    const cur = this.canvas.getActiveObjects().filter((x) => !(x as Lockable).locked)
+    if (cur.includes(o)) return this.select(cur.filter((x) => x !== o))
+    if ((o as Lockable).locked) return this.select([o])
+    // Keep stacking order inside the selection.
+    const all = this.canvas.getObjects()
+    this.select([...cur, o].sort((a, b) => all.indexOf(a) - all.indexOf(b)))
+  }
+
+  selectAll() {
+    this.select(this.canvas.getObjects().filter((o) => !(o as Lockable).locked && o.visible !== false))
+  }
+
+  setLayerVisible(uid: string, visible: boolean) {
+    const o = this.byUid(uid)
+    if (!o) return
+    o.visible = visible
+    if (!visible && this.canvas.getActiveObjects().includes(o)) this.canvas.discardActiveObject()
+    this.canvas.requestRenderAll()
+    this.changed()
+    this.emitSelection()
+  }
+
+  setLayerLocked(uid: string, locked: boolean) {
+    const o = this.byUid(uid)
+    if (o) this.lock([o], locked)
+  }
+
+  /** Lock or unlock the selection. */
+  lockActive(locked: boolean) {
+    this.lock(this.canvas.getActiveObjects(), locked)
+  }
+
+  private lock(objs: FabricObject[], locked: boolean) {
+    if (!objs.length) return
+    const selected = this.canvas.getActiveObjects()
+    const multi = selected.length > 1 && objs.some((o) => selected.includes(o))
+    if (multi) this.canvas.discardActiveObject()
+    for (const o of objs) {
+      ;(o as Lockable).locked = locked
+      applyLock(o)
+    }
+    if (multi) this.select(selected.length === objs.length ? [objs[0]] : selected.filter((o) => !objs.includes(o)))
+    this.canvas.requestRenderAll()
+    this.changed()
+    this.emitSelection()
+  }
+
+  /** Move a layer to a position in the top-first list. */
+  moveLayer(uid: string, toIndex: number) {
+    const o = this.byUid(uid)
+    if (!o) return
+    const n = this.canvas.getObjects().length
+    this.canvas.moveObjectTo(o, Math.max(0, Math.min(n - 1, n - 1 - toIndex)))
+    this.canvas.requestRenderAll()
+    this.changed()
+    this.emitSelection()
+  }
+
+  /** Change the stacking order of the selection. */
+  arrange(op: ArrangeOp) {
+    const all = this.canvas.getObjects()
+    const objs = [...this.canvas.getActiveObjects()].sort((a, b) => all.indexOf(a) - all.indexOf(b))
+    if (!objs.length) return
+    // Walk in the order that keeps the selection's own stacking intact.
+    const order = op === 'front' || op === 'backward' ? objs : [...objs].reverse()
+    for (const o of order) {
+      if (op === 'front') this.canvas.bringObjectToFront(o)
+      else if (op === 'back') this.canvas.sendObjectToBack(o)
+      else if (op === 'forward') this.canvas.bringObjectForward(o)
+      else this.canvas.sendObjectBackwards(o)
+    }
+    this.canvas.requestRenderAll()
+    this.changed()
+    this.emitSelection()
+  }
+
+  /** Where the selected object sits: can it still move up or down? */
+  stackPosition(): { top: boolean; bottom: boolean } {
+    const all = this.canvas.getObjects()
+    const idx = this.canvas.getActiveObjects().map((o) => all.indexOf(o))
+    if (!idx.length) return { top: true, bottom: true }
+    return { top: Math.min(...idx) >= all.length - idx.length, bottom: Math.max(...idx) <= idx.length - 1 }
+  }
+
+  /** Align the selection to the card (one object) or to the selection's bounds (several). */
+  align(mode: AlignMode) {
+    this.moveSelection((boxes) => alignBoxes(boxes, boxes.length > 1 ? unionBox(boxes) : { x: 0, y: 0, w: this.page.width, h: this.page.height }, mode))
+  }
+
+  /** Space three or more selected objects evenly. */
+  distribute(axis: Axis) {
+    this.moveSelection((boxes) => distributeBoxes(boxes, axis))
+  }
+
+  private moveSelection(plan: (boxes: Box[]) => { dx: number; dy: number }[]) {
+    const objs = this.canvas.getActiveObjects().filter((o) => !(o as Lockable).locked)
+    if (!objs.length) return
+    // Work in card coordinates: take objects out of the selection group first.
+    this.canvas.discardActiveObject()
+    const deltas = plan(objs.map(boxOf))
+    objs.forEach((o, i) => {
+      o.set({ left: o.left + deltas[i].dx, top: o.top + deltas[i].dy })
+      o.setCoords()
+    })
+    this.select(objs)
+    this.changed()
+  }
+
   // ---- events ---------------------------------------------------------------
 
   private changed() {
-    if (!this.loading) this.cb.onChange()
+    if (this.loading) return
+    this.cb.onChange()
+    this.scheduleHistory()
   }
 
   private frame = 0
   emitSelection() {
     cancelAnimationFrame(this.frame)
-    this.frame = requestAnimationFrame(() => this.cb.onSelection(this.snapshot()))
+    this.frame = requestAnimationFrame(() => {
+      this.cb.onSelection(this.snapshot())
+      this.cb.onLayers?.(this.layers())
+    })
   }
 
   snapshot(): SelectionSnapshot {
     const objs = this.canvas.getActiveObjects()
     if (!objs.length) return null
-    if (objs.length > 1) return { kind: 'multi', count: objs.length }
+    if (objs.length > 1) return { kind: 'multi', count: objs.length, locked: objs.some((x) => (x as Lockable).locked) }
     const o = objs[0]
     const tl = o.getPointByOrigin('left', 'top')
     const common = {
       name: (o as CardText).name ?? '',
+      locked: !!(o as Lockable).locked,
       angle: Math.round(o.angle ?? 0),
       opacity: o.opacity ?? 1,
       x: Math.round(tl.x),
@@ -592,7 +956,12 @@ export class CardEditor {
 
   private bindEvents() {
     const c = this.canvas
-    c.on('object:added', () => this.changed())
+    c.on('object:added', ({ target }) => {
+      const t = target as Lockable
+      if (!t.uid || c.getObjects().some((o) => o !== t && (o as Lockable).uid === t.uid)) t.uid = newUid()
+      applyLock(t)
+      this.changed()
+    })
     c.on('object:removed', () => this.changed())
     c.on('object:modified', ({ target }) => {
       // Corner-scaling text changes its size, not a stretch factor.
@@ -612,7 +981,7 @@ export class CardEditor {
     c.on('object:resizing', ({ target }) => {
       if (isCardText(target)) applyText(target, this.ctx, { placeholders: true })
     })
-    c.on('object:moving', ({ target }) => {
+    c.on('object:moving', ({ target, e }) => {
       const g = c.grid
       if (g.snap) {
         const W = this.page.width
@@ -620,6 +989,22 @@ export class CardEditor {
         let x = snap(target.left)
         if (Math.abs(target.left - W / 2) < g.size / 2) x = W / 2
         target.set({ left: x, top: snap(target.top) })
+      } else if (g.guides !== false && !(e as MouseEvent).altKey) {
+        if (!this.dragOthers) {
+          const inside = new Set(target instanceof ActiveSelection ? target.getObjects() : [target])
+          this.dragOthers = c
+            .getObjects()
+            .filter((o) => !inside.has(o) && o.visible !== false)
+            .slice(-80)
+            .map(boxOf)
+        }
+        target.setCoords()
+        const r = snapToGuides(boxOf(target), this.page, this.dragOthers, 6 / c.getZoom())
+        if (r.dx || r.dy) {
+          target.set({ left: target.left + r.dx, top: target.top + r.dy })
+          target.setCoords()
+        }
+        c.guides = r.guides
       }
       this.emitSelection()
     })
@@ -656,6 +1041,11 @@ export class CardEditor {
       c.requestRenderAll()
     })
     c.on('mouse:up', () => {
+      this.dragOthers = undefined
+      if (c.guides.length) {
+        c.guides = []
+        c.requestRenderAll()
+      }
       this.pan = undefined
       c.skipTargetFind = false
       c.selection = true
@@ -708,7 +1098,7 @@ export class CardEditor {
 
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLElement && (e.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))
-      if (typing) return
+      if (typing || !this.keysEnabled) return
       if (e.code === 'Space') {
         this.spaceDown = e.type === 'keydown'
         c.defaultCursor = this.spaceDown ? 'grab' : 'default'
@@ -716,6 +1106,22 @@ export class CardEditor {
         return
       }
       if (e.type !== 'keydown') return
+      const mod = e.metaKey || e.ctrlKey
+      if (mod && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        void (e.shiftKey ? this.redo() : this.undo())
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'y') {
+        e.preventDefault()
+        void this.redo()
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'a') {
+        e.preventDefault()
+        this.selectAll()
+        return
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && c.getActiveObject()) {
         e.preventDefault()
         this.deleteActive()
@@ -732,7 +1138,7 @@ export class CardEditor {
       } else if ((e.metaKey || e.ctrlKey) && e.key === '0') {
         e.preventDefault()
         this.fit()
-      } else if (e.key.startsWith('Arrow') && c.getActiveObject()) {
+      } else if (e.key.startsWith('Arrow') && c.getActiveObject() && !(c.getActiveObject() as Lockable).locked) {
         e.preventDefault()
         const o = c.getActiveObject()!
         const step = e.shiftKey ? 10 : 1
@@ -753,8 +1159,33 @@ export class CardEditor {
   }
 
   dispose() {
+    clearTimeout(this.historyTimer)
     cancelAnimationFrame(this.frame)
     this.disposers.forEach((d) => d())
     void this.canvas.dispose()
   }
+}
+
+function boxOf(o: FabricObject): Box {
+  const r = o.getBoundingRect()
+  return { x: r.left, y: r.top, w: r.width, h: r.height }
+}
+
+function layerKind(o: FabricObject): LayerKind {
+  if (isCardText(o)) return /\{\{/.test(o.sourceText ?? '') ? 'field' : 'text'
+  if (isCardImage(o)) return o.binding ? 'photo' : 'image'
+  if (o.type === 'group') return 'group'
+  return 'shape'
+}
+
+const DEFAULT_TEXT_NAMES = new Set(['Heading', 'Text', ''])
+
+export function layerName(o: FabricObject): string {
+  const name = ((o as Lockable).name ?? '').trim()
+  if (isCardText(o) && DEFAULT_TEXT_NAMES.has(name)) {
+    const t = (o.sourceText ?? o.text ?? '').replace(/\s+/g, ' ').trim()
+    return t.length > 40 ? `${t.slice(0, 39)}…` : t || 'Text'
+  }
+  if (name) return name
+  return isCardImage(o) ? (o.binding ? 'Recipe photo' : 'Image') : o.type === 'group' ? 'Group' : 'Shape'
 }

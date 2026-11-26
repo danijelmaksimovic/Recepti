@@ -19,7 +19,7 @@
 - [x] Phase 4 – Recipe management (done, 2026-11-25)
 - [x] Phase 5 – Card Designer foundations (done, 2026-11-25)
 - [x] Phase 6 – Asset import & library (built 2026-11-25; awaiting review)
-- [ ] Phase 7 – Manipulation, layers, sketch pad
+- [x] Phase 7 – Manipulation, layers, sketch pad (built 2026-11-26; awaiting review)
 - [ ] Phase 8 – Templates & reusable designs
 - [ ] Phase 9 – Export, backup, restore
 - [ ] Phase 10 – PWA/mobile optimization & testing
@@ -59,7 +59,7 @@
 
 ## Open items
 - Hosting: GitHub Pages, deployed by .github/workflows/deploy.yml on push to main.
-- Tablet used for drawing (iPad / Android / Windows) → stylus test target.
+- Drawing tablet: Huawei MatePad (Android Chrome, M-Pencil) → stylus test target.
 
 ## Phase 4 notes
 - Screens: Home (search, category/favorite chips, sort, Favorites + Collections rows, masonry grid), Recipe detail (tick-off ingredients, ⋯ menu: edit/duplicate/collections/delete), Recipe form (`/recipes/new`, `/recipes/:id/edit`), Collection page, Settings › Categories & collections.
@@ -68,3 +68,11 @@
 - Main photo: downscaled to 2560 px + 720 px thumb on the main thread (moves to a worker in Phase 6).
 - Component tests: Testing Library + jsdom (`// @vitest-environment jsdom`), helper `src/test/render.tsx`.
 - `Button`/`Chip` default to `type="button"` so sheets inside forms never submit them.
+
+## Phase 7 notes
+- Undo/redo: snapshot history of the card doc (`src/domain/history.ts`), changes within 350 ms merge into one step; Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z, Ctrl+Y, plus top-bar buttons. Card size changes are not undo steps.
+- Every object has a stable `uid` (custom prop). Layers panel (header button): top-most first, drag/arrow-key restack, hide (`visible`), lock (`locked` → not targetable, not movable, not deletable), rename via Arrange › Layer name, "Select several" for multi-select on touch.
+- Arrange: align to card (one object) or to each other (several), distribute (3+), front/forward/backward/back. Smart guides snap to card and object edges/centres (Canvas panel toggle; Alt drags freely). Geometry in `src/domain/card/align.ts`.
+- Sketch pad (`src/features/sketch/`, lazy chunk): full-screen Canvas 2D + Pointer Events + perfect-freehand. Pen/pencil/marker/eraser (destination-out), 4 sizes, colours, undo/redo, clear. The card is shown faintly behind; Done saves a trimmed transparent PNG asset (kind `drawing`, strokes in `sketchData`) and places it where it was drawn. "Edit drawing" re-opens the strokes and swaps in a new asset (old one stays in the Library).
+- Stylus: pen pressure used (with a floor), coalesced events, eraser end / barrel button erases, hover shows brush outline. Palm rejection: fingers draw until a pen is seen, then only pan/zoom (Fingers: Auto/Draw/Move); big contacts ignored; touch ignored while pen is down; a second finger turns a touch stroke into a pinch.
+- Phones: grid toggle moved to Canvas panel to make room for undo/redo/layers in the top bar.

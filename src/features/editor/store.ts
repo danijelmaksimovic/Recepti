@@ -1,18 +1,20 @@
 import { create } from 'zustand'
-import type { GridSettings, SelectionSnapshot } from './fabric/engine'
+import type { HistoryState, LayerInfo, SelectionSnapshot } from './fabric/engine'
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
-export type ToolId = 'text' | 'fields' | 'photos' | 'images' | 'background' | 'canvas'
-export type SelectionPanel = 'edit' | 'style' | 'crop' | 'arrange'
+export type ToolId = 'text' | 'fields' | 'photos' | 'images' | 'draw' | 'background' | 'canvas'
+export type SelectionPanel = 'edit' | 'style' | 'crop' | 'arrange' | 'align'
 
 const GRID_KEY = 'studio.grid'
 
-function loadGrid(): Omit<GridSettings, 'size'> & { density: GridDensity } {
+type GridUI = { show: boolean; snap: boolean; guides: boolean; density: GridDensity }
+
+function loadGrid(): GridUI {
   try {
     const v = JSON.parse(localStorage.getItem(GRID_KEY) ?? '{}')
-    return { show: !!v.show, snap: !!v.snap, density: ['fine', 'medium', 'coarse'].includes(v.density) ? v.density : 'medium' }
+    return { show: !!v.show, snap: !!v.snap, guides: v.guides !== false, density: ['fine', 'medium', 'coarse'].includes(v.density) ? v.density : 'medium' }
   } catch {
-    return { show: false, snap: false, density: 'medium' }
+    return { show: false, snap: false, guides: true, density: 'medium' }
   }
 }
 
@@ -27,7 +29,13 @@ interface EditorUIState {
   save: SaveState
   tool: ToolId | null
   panel: SelectionPanel | null
-  grid: { show: boolean; snap: boolean; density: GridDensity }
+  /** Layers panel open (a side section on desktop, a sheet on phones). */
+  showLayers: boolean
+  layers: LayerInfo[]
+  history: HistoryState
+  /** Sketch pad open: a new drawing, or editing the drawing asset `assetId`. */
+  sketch: { assetId?: string } | null
+  grid: GridUI
   set: (patch: Partial<Omit<EditorUIState, 'set' | 'setGrid'>>) => void
   setGrid: (patch: Partial<EditorUIState['grid']>) => void
 }
@@ -39,6 +47,10 @@ export const useEditorUI = create<EditorUIState>((set, get) => ({
   save: 'saved',
   tool: null,
   panel: null,
+  showLayers: false,
+  layers: [],
+  history: { canUndo: false, canRedo: false },
+  sketch: null,
   grid: loadGrid(),
   set: (patch) => set(patch),
   setGrid: (patch) => {

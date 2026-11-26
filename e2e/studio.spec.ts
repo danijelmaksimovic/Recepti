@@ -100,8 +100,15 @@ test.describe('Design Studio', () => {
       await zoomLabel.click()
       await expect(zoomLabel).toHaveText(fitText)
     }
-    await page.getByRole('button', { name: 'Show grid' }).click()
-    await expect(page.getByRole('button', { name: 'Hide grid' })).toBeVisible()
+    if (isMobile) {
+      // Phones keep the grid switch in the Canvas panel to leave room for undo/redo in the top bar.
+      await page.getByRole('button', { name: 'Canvas' }).click()
+      await page.getByRole('switch', { name: 'Show grid' }).click()
+      await expect(page.getByRole('switch', { name: 'Show grid' })).toHaveAttribute('aria-checked', 'true')
+    } else {
+      await page.getByRole('button', { name: 'Show grid' }).click()
+      await expect(page.getByRole('button', { name: 'Hide grid' })).toBeVisible()
+    }
     const d = await storedDesign(page, id)
     expect(d).toMatchObject({ width: 1200, height: 1800 })
   })
