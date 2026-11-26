@@ -100,3 +100,22 @@ describe('presets', () => {
     expect(describeSize('custom', 900, 700)).toBe('900 × 700 px')
   })
 })
+
+describe('images in the document', () => {
+  it('stores images by asset id only, and bound frames without any asset id', async () => {
+    const { stripResolvedText } = await import('../doc')
+    const [fixed, bound] = stripResolvedText([
+      { type: 'Image', assetId: 'a1', src: 'blob:http://x/123', crop: { aspect: 1 } },
+      { type: 'Image', binding: 'recipe.photo', assetId: 'a2', src: 'blob:http://x/456' },
+    ])
+    expect(fixed).toEqual({ type: 'Image', assetId: 'a1', src: '', crop: { aspect: 1 } })
+    expect(bound).toEqual({ type: 'Image', binding: 'recipe.photo', src: '' })
+  })
+
+  it('keeps a valid background image and drops a broken one', async () => {
+    const { migrateDoc } = await import('../doc')
+    const ok = migrateDoc({ version: 1, background: { image: { assetId: 'bg', fit: 'tile', opacity: 3, tileSize: 0.01 } }, objects: [] })
+    expect(ok.background.image).toEqual({ assetId: 'bg', fit: 'tile', opacity: 1, tileSize: 0.05 })
+    expect(migrateDoc({ version: 1, background: { image: { fit: 'cover' } }, objects: [] }).background.image).toBeUndefined()
+  })
+})

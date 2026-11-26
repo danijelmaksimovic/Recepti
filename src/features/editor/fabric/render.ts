@@ -3,10 +3,12 @@
  * screenshot of the editor). Used for thumbnails now and exports later
  * (BLUEPRINT §7).
  */
-import { StaticCanvas, util, type FabricObject } from 'fabric'
+import { StaticCanvas } from 'fabric'
 import { fontsInDoc, migrateDoc } from '@/domain/card/doc'
 import type { TokenContext } from '@/domain/card/tokens'
 import { paintPage, type PageSpec } from './background'
+import { loadAssetImage } from '@/features/assets/urls'
+import { enlivenCardObjects } from './images'
 import { setupFabric } from './setup'
 import { applyTextAll, ensureFonts } from './text'
 
@@ -40,8 +42,9 @@ export async function renderDoc(
     renderOnAddRemove: false,
   })
   try {
-    sc.page = { width: card.width, height: card.height, background: doc.background }
-    const objects = (await util.enlivenObjects(doc.objects)) as FabricObject[]
+    const image = doc.background.image ? await loadAssetImage(doc.background.image.assetId) : undefined
+    sc.page = { width: card.width, height: card.height, background: doc.background, image }
+    const objects = await enlivenCardObjects(doc.objects, ctx)
     applyTextAll(objects, ctx)
     sc.add(...objects)
     sc.setZoom(scale)

@@ -10,7 +10,7 @@
 export const CARD_DOC_VERSION = 1
 
 /** Extra object properties that are always serialized (BLUEPRINT §5). */
-export const CUSTOM_PROPS = ['name', 'sourceText', 'listStyle', 'baseFontSize', 'maxHeight', 'binding', 'assetId', 'locked'] as const
+export const CUSTOM_PROPS = ['name', 'sourceText', 'listStyle', 'baseFontSize', 'maxHeight', 'binding', 'assetId', 'locked', 'crop', 'radius'] as const
 
 export type TextureKind = 'none' | 'dots' | 'grid' | 'lines' | 'diagonal' | 'gingham' | 'paper' | 'linen'
 
@@ -25,8 +25,21 @@ export const TEXTURES: { kind: TextureKind; label: string }[] = [
   { kind: 'gingham', label: 'Gingham' },
 ]
 
+export type BackgroundFit = 'cover' | 'contain' | 'tile'
+
+/** A library image painted over the background colour, under the texture. */
+export interface BackgroundImage {
+  assetId: string
+  fit: BackgroundFit
+  /** 0–1 */
+  opacity: number
+  /** Tile width as a fraction of the card's short side (tile only), 0.05–1. */
+  tileSize: number
+}
+
 export interface CardBackground {
   color: string
+  image?: BackgroundImage
   texture: TextureKind
   textureColor: string
   /** 0–1 */
@@ -59,9 +72,22 @@ const HEX = /^#[0-9a-f]{6}$/i
 const clamp = (n: unknown, lo: number, hi: number, fallback: number) =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback
 
+function cleanImage(raw: unknown): BackgroundImage | undefined {
+  const i = (raw && typeof raw === 'object' ? raw : {}) as Partial<BackgroundImage>
+  if (typeof i.assetId !== 'string' || !i.assetId) return undefined
+  return {
+    assetId: i.assetId,
+    fit: i.fit === 'contain' || i.fit === 'tile' ? i.fit : 'cover',
+    opacity: clamp(i.opacity, 0, 1, 1),
+    tileSize: clamp(i.tileSize, 0.05, 1, 0.25),
+  }
+}
+
 function cleanBackground(raw: unknown): CardBackground {
   const b = (raw && typeof raw === 'object' ? raw : {}) as Partial<CardBackground>
+  const image = cleanImage(b.image)
   return {
+    ...(image ? { image } : {}),
     color: typeof b.color === 'string' && HEX.test(b.color) ? b.color : DEFAULT_BACKGROUND.color,
     texture: TEXTURES.some((t) => t.kind === b.texture) ? (b.texture as TextureKind) : 'none',
     textureColor: typeof b.textureColor === 'string' && HEX.test(b.textureColor) ? b.textureColor : DEFAULT_BACKGROUND.textureColor,
@@ -106,6 +132,7 @@ export function migrateDoc(raw: unknown): CardDoc {
  */
 export function stripResolvedText(objects: CardObjectJSON[]): CardObjectJSON[] {
   return objects.map((o) => {
+    if (o.type === 'Image') return stripImageSource(o)
     if (typeof o.sourceText !== 'string') return o
     const { styles: _styles, ...rest } = o
     return { ...rest, text: o.sourceText }
@@ -127,4 +154,18 @@ export function fontsInDoc(doc: Pick<CardDoc, 'objects'>): { family: string; wei
   }
   walk(doc.objects)
   return [...seen.values()]
+}
+
+/**
+ * Images are stored by reference only (BLUEPRINT §5): the session's object URL
+ * is dropped, and a frame bound to a recipe photo keeps no asset id at all,
+ * because the photo belongs to the recipe rather than to the design.
+ */
+export function stripImageSource(o: CardObjectJSON): CardObjectJSON {
+  const { src: _src, ...rest } = o
+  if (typeof o.binding === 'string' && o.binding) {
+    const { assetId: _assetId, ...unbound } = rest
+    return { ...unbound, src: '' }
+  }
+  return { ...rest, src: '' }
 }

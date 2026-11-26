@@ -124,6 +124,37 @@ export interface PageSpec {
   width: number
   height: number
   background: CardBackground
+  /** Decoded `background.image`, once loaded. */
+  image?: HTMLImageElement
+}
+
+function paintImage(ctx: CanvasRenderingContext2D, page: PageSpec) {
+  const spec = page.background.image
+  const img = page.image
+  if (!spec || !img || !img.naturalWidth || spec.opacity <= 0) return
+  const { width: W, height: H } = page
+  const iw = img.naturalWidth
+  const ih = img.naturalHeight
+  ctx.save()
+  ctx.globalAlpha = spec.opacity
+  ctx.beginPath()
+  ctx.rect(0, 0, W, H)
+  ctx.clip()
+  if (spec.fit === 'tile') {
+    const pattern = ctx.createPattern(img, 'repeat')
+    if (pattern) {
+      const k = (spec.tileSize * Math.min(W, H)) / iw
+      pattern.setTransform(new DOMMatrix([k, 0, 0, k, 0, 0]))
+      ctx.fillStyle = pattern
+      ctx.fillRect(0, 0, W, H)
+    }
+  } else {
+    const k = spec.fit === 'cover' ? Math.max(W / iw, H / ih) : Math.min(W / iw, H / ih)
+    const w = iw * k
+    const h = ih * k
+    ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h)
+  }
+  ctx.restore()
 }
 
 /** Texture scale unit for a card: 1 at 1080 px on the short side. */
@@ -146,6 +177,7 @@ export function paintPage(ctx: CanvasRenderingContext2D, vpt: number[], page: Pa
   ctx.fillStyle = page.background.color
   ctx.fillRect(0, 0, page.width, page.height)
   ctx.shadowColor = 'transparent'
+  paintImage(ctx, page)
   const tile = textureTile(page.background, pageUnit(page))
   if (tile) {
     const pattern = ctx.createPattern(tile, 'repeat')

@@ -16,9 +16,9 @@
 - [x] Phase 1 – Architecture & blueprint
 - [x] Phase 2 – Design system, navigation, PWA shell (done, 2026-11-25) · live on GitHub Pages, installs on iPhone
 - [x] Phase 3 – Storage & data models (done, 2026-11-25)
-- [x] Phase 4 – Recipe management (screens wired to Dexie; awaiting review)
-- [ ] Phase 5 – Card Designer foundations
-- [ ] Phase 6 – Asset import & library
+- [x] Phase 4 – Recipe management (done, 2026-11-25)
+- [x] Phase 5 – Card Designer foundations (done, 2026-11-25)
+- [x] Phase 6 – Asset import & library (built 2026-11-25; awaiting review)
 - [ ] Phase 7 – Manipulation, layers, sketch pad
 - [ ] Phase 8 – Templates & reusable designs
 - [ ] Phase 9 – Export, backup, restore
@@ -49,6 +49,13 @@
 - Autosave 1 s after changes + on leaving. 9 bundled OFL fonts (Latin Extended; Cyrillic where the family has it).
 - `npm run e2e`: Playwright, Chromium desktop + iPhone emulation (`--project=webkit` where WebKit is installed).
 - Deferred to Phase 7: undo/redo, layers, lock, align, smart guides, z-order.
+
+## Phase 6 notes
+- Import (`src/features/assets/`): picker, drag-drop, paste, in Library and Studio. Format sniffed from bytes; HEIC gets a clear message. Rasters processed in a Web Worker (OffscreenCanvas) with a main-thread fallback: photos re-encoded and downscaled to 2560 px (strips EXIF/GPS), transparent or small PNGs kept as graphics with original bytes (up to 4096 px). SVG cleaned by DOMPurify (no scripts, handlers, foreignObject, external refs), given a viewBox and ≥1024 px intrinsic size.
+- Card images are FabricImage objects stored by `assetId` only (`src` stripped). Crop is size-independent `{aspect, zoom, fx, fy}` + `radius` (fraction of short side) as custom props, so a frame bound to `recipe.photo` keeps its crop when the photo changes. Bound frames store no assetId.
+- Background image: `background.image {assetId, fit cover|contain|tile, opacity, tileSize}`, painted under the texture; counted by `extractAssetIds`.
+- Library: kind chips, search by name/tag, usage badges (`assetUsageCounts`), detail sheet (rename, kind, tags, delete only when unused).
+- Not done: display-size proxies for the mobile editor (photos are ≤2560 px, fine so far); SVG placed as an image, not editable vectors.
 
 ## Open items
 - Hosting: GitHub Pages, deployed by .github/workflows/deploy.yml on push to main.

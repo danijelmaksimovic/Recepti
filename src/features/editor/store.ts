@@ -2,8 +2,8 @@ import { create } from 'zustand'
 import type { GridSettings, SelectionSnapshot } from './fabric/engine'
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
-export type ToolId = 'text' | 'fields' | 'background' | 'canvas'
-export type SelectionPanel = 'edit' | 'style' | 'arrange'
+export type ToolId = 'text' | 'fields' | 'photos' | 'images' | 'background' | 'canvas'
+export type SelectionPanel = 'edit' | 'style' | 'crop' | 'arrange'
 
 const GRID_KEY = 'studio.grid'
 
